@@ -1,0 +1,45 @@
+# Applock-go Configuration Example
+
+# List of applications that should be locked
+[[blockedApps]]
+path = "/usr/bin/firefox"
+displayName = "Firefox"
+
+[[blockedApps]]
+path = "/usr/bin/chromium"
+displayName = "Chromium"
+
+[[blockedApps]]
+path = "/usr/bin/google-chrome"
+displayName = "Google Chrome"
+
+[[blockedApps]]
+path = "/usr/bin/thunderbird"
+displayName = "Thunderbird"
+
+# Authentication settings
+[auth]
+# Whether to use zero-knowledge proof (Themis Secure Comparator)
+# This enhances privacy by ensuring the app never learns your password
+useZeroKnowledgeProof = true
+
+# Path to store the secret if not using keychain
+# Only used if keychainService/keychainAccount are not specified
+secretPath = "/etc/applock-go/secret"
+
+# Hash algorithm to use when not using ZKP
+# Only used if useZeroKnowledgeProof is false
+# Options: bcrypt, argon2id, scrypt, pbkdf2
+hashAlgorithm = "argon2id"
+
+# GUI type to use for authentication dialogs
+# Options: gtk, webkit2gtk, indicator
+guiType = "gtk"
+
+# Keychain integration (Linux keyring)
+# To use keychain integration, specify both service and account
+keychainService = "applock-go"
+keychainAccount = "default"
+
+# Uncomment and set to true to enable verbose logging
+# verbose = true

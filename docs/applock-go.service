@@ -1,0 +1,32 @@
+[Unit]
+Description=Applock-go Application Locking Service
+Documentation=https://applock-go-go
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/applock-go -config /etc/applock-go/config.yaml
+Restart=on-failure
+RestartSec=5
+# Give the service 3 seconds to stop gracefully before killing it
+KillSignal=SIGINT
+TimeoutStopSec=3
+
+# Security hardening
+CapabilityBoundingSet=CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
+ProtectSystem=strict
+ReadWritePaths=/etc/applock-go
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+RestrictRealtime=true
+MemoryDenyWriteExecute=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
