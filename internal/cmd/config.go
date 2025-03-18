@@ -109,23 +109,37 @@ func (m configModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.showConfirm {
 				// Actually save the configuration here
-				m.saved = true
 				if m.cfg == nil {
 					m.cfg = &config.Config{}
 				}
 
-				// Update config with form values (in a real implementation, this would save to file)
+				// Update config with form values
 				blockApp := config.BlockedApp{
 					Path:        m.inputs[0].Value(),
 					DisplayName: m.inputs[1].Value(),
 				}
-				m.cfg.BlockedApps = append(m.cfg.BlockedApps, blockApp)
-				m.cfg.KeychainService = m.inputs[2].Value()
-				m.cfg.KeychainAccount = m.inputs[3].Value()
+				
+				// Only add the blocked app if path is not empty
+				if blockApp.Path != "" {
+					m.cfg.BlockedApps = append(m.cfg.BlockedApps, blockApp)
+				}
+				
+				// Update keychain settings if provided
+				if m.inputs[2].Value() != "" {
+					m.cfg.KeychainService = m.inputs[2].Value()
+				}
+				if m.inputs[3].Value() != "" {
+					m.cfg.KeychainAccount = m.inputs[3].Value()
+				}
 
-				// In a real implementation, save config to file
-				// Example: config.SaveConfig(m.cfg, configPath)
-
+				// Save config to file
+				if err := config.SaveConfig(m.cfg, configPath); err != nil {
+					m.err = fmt.Errorf("failed to save configuration: %w", err)
+					m.showConfirm = false
+					return m, nil
+				}
+				
+				m.saved = true
 				return m, tea.Quit
 			}
 			m.showConfirm = true

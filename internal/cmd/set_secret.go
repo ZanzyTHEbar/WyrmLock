@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"applock-go/internal/auth"
+
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -69,8 +71,16 @@ func (m secretModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 
-				// Save secret
-				// In a real implementation, this would call auth.SetSecret
+				// Save secret using authenticator
+				a, err := auth.NewAuthenticator(m.cfg)
+				if err != nil {
+					m.err = fmt.Errorf("failed to initialize authenticator: %w", err)
+					return m, nil
+				}
+				if err := a.SetSecret([]byte(m.input.Value())); err != nil {
+					m.err = fmt.Errorf("failed to set secret: %w", err)
+					return m, nil
+				}
 				m.success = true
 				return m, tea.Quit
 			}

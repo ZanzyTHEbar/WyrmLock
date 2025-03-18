@@ -1,13 +1,22 @@
 [Unit]
 Description=Applock-go Application Locking Service
-Documentation=https://applock-go-go
+Documentation=https://applock-go.readthedocs.io/en/latest/
+Wants=network-online.target
+Requires=network-online.target
+After=network-online.target
+Wants=network.target
+Requires=network.target
+# This service should start after the network is up and running
 After=network.target
 
 [Service]
 Type=simple
 User=root
 Group=root
-ExecStart=/usr/local/bin/applock-go -config /etc/applock-go/config.yaml
+WorkingDirectory=/etc/applock-go
+ExecStart=/usr/local/bin/applock-go -c /etc/applock-go/config.toml run
+StandardOutput=journal
+StandardError=journal
 Restart=on-failure
 RestartSec=5
 # Give the service 3 seconds to stop gracefully before killing it

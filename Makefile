@@ -44,13 +44,13 @@ clean:
 # Install the application
 install-bin: build
 	@echo "Installing $(BINARY_NAME)..."
-	@install -d $(DESTDIR)$(INSTALL_DIR)
-	@install -m 755 $(BINARY_NAME) $(DESTDIR)$(INSTALL_DIR)/$(BINARY_NAME)
-	@install -d $(DESTDIR)$(CONFIG_DIR)
+	@sudo install -d $(DESTDIR)$(INSTALL_DIR)
+	@sudo install -m 755 $(BINARY_NAME) $(DESTDIR)$(INSTALL_DIR)/$(BINARY_NAME)
+	@sudo install -d $(DESTDIR)$(CONFIG_DIR)
 	@if [ ! -f $(DESTDIR)$(CONFIG_DIR)/config.toml ]; then \
 		echo "Creating default configuration..."; \
-		mkdir -p $(DESTDIR)$(CONFIG_DIR); \
-		./$(BINARY_NAME) -create-config $(DESTDIR)$(CONFIG_DIR)/config.toml; \
+		sudo mkdir -p $(DESTDIR)$(CONFIG_DIR); \
+		sudo ./$(BINARY_NAME) create-config $(DESTDIR)$(CONFIG_DIR)/config.toml; \
 	else \
 		echo "Configuration file already exists, not overwriting"; \
 	fi
@@ -60,28 +60,28 @@ install-bin: build
 uninstall:
 	@echo "Uninstalling $(BINARY_NAME)..."
 	@sudo rm -f $(DESTDIR)$(INSTALL_DIR)/$(BINARY_NAME)
-	@echo "Note: Configuration directory $(CONFIG_DIR) was not removed"
-	@echo "To remove the service: systemctl disable --now $(BINARY_NAME).service && rm $(SERVICE_FILE)"
+	@sudo rm -f $(DESTDIR)$(CONFIG_DIR)/config.toml
+	@echo "Note: Configuration directory $(CONFIG_DIR) was removed"
+	@sudo systemctl disable --now $(BINARY_NAME).service && sudo rm $(SERVICE_FILE)
 	@echo "Uninstall complete!"
 
 # Create and install systemd service file
 install-service:
 	@echo "Installing systemd service..."
-	@install -d $(DESTDIR)$(SYSTEMD_DIR)
-	@install -m 644 docs/$(BINARY_NAME).service $(DESTDIR)$(SERVICE_FILE)
+	@sudo install -d $(DESTDIR)$(SYSTEMD_DIR)
+	@sudo install -m 644 docs/$(BINARY_NAME).service $(DESTDIR)$(SERVICE_FILE)
 	@echo "Service installation complete!"
 	@echo "To enable the service, run: sudo systemctl enable --now $(BINARY_NAME).service"
 
 # Full installation including systemd service
 install: install-bin install-service
 	@echo "Full installation complete!"
-	@echo "To enable the service, run: sudo systemctl enable --now $(BINARY_NAME).service"
-	@echo "To set up the authentication secret: sudo $(BINARY_NAME) -set-secret"
+	@echo "To set up the authentication secret: sudo $(BINARY_NAME) set-secret"
 
 # Run application (as root)
 run:
 	@echo "Running $(BINARY_NAME)..."
-	@if [ "$$(id -u)" -ne 0 ]; then \
+	@if [ "$$(id -u)" -ne 0 ]; then install-service\
 		echo "This application requires root privileges to run"; \
 		sudo ./$(BINARY_NAME); \
 	else \

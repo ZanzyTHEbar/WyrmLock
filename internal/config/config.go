@@ -194,3 +194,49 @@ func CreateDefaultConfig(path string) error {
 
 	return nil
 }
+
+// SaveConfig saves the configuration to the specified file path
+func SaveConfig(cfg *Config, configPath string) error {
+	// Create the directory if it doesn't exist
+	configDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	// Initialize viper for saving
+	v := viper.New()
+	
+	// Set config values from our Config struct
+	v.Set("blockedApps", cfg.BlockedApps)
+	v.Set("keychainService", cfg.KeychainService)
+	v.Set("keychainAccount", cfg.KeychainAccount)
+	
+	// Auth settings - fixing the incorrect field name
+	v.Set("auth.useZeroKnowledgeProof", cfg.Auth.UseZeroKnowledgeProof)
+	v.Set("auth.hashAlgorithm", cfg.Auth.HashAlgorithm)
+	v.Set("auth.secretPath", cfg.Auth.SecretPath)
+	v.Set("auth.guiType", cfg.Auth.GuiType)
+	
+	// Other settings
+	v.Set("verbose", cfg.Verbose)
+	
+	// Set the config file path and type
+	ext := filepath.Ext(configPath)
+	if ext != "" {
+		v.SetConfigType(strings.TrimPrefix(ext, "."))
+	} else {
+		v.SetConfigType("toml")
+	}
+	v.SetConfigFile(configPath)
+	
+	// Write the config to file
+	if err := v.WriteConfig(); err != nil {
+		// If the config file doesn't exist, use SafeWriteConfig
+		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+			return v.SafeWriteConfig()
+		}
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+	
+	return nil
+}

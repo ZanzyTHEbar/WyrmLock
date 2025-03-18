@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -9,8 +10,10 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
+	"applock-go/internal/auth"
 	"applock-go/internal/config"
 	"applock-go/internal/monitor"
 )
@@ -196,40 +199,138 @@ func loadConfigCmd(path string) tea.Cmd {
 	}
 }
 
+// Global monitor instance used by both interactive and non-interactive modes
+var processMonitor *monitor.ProcessMonitor
+
+// initializeMonitor creates and initializes the process monitor
+func initializeMonitor(cfg *config.Config) (*monitor.ProcessMonitor, error) {
+	// Create authenticator using cfg
+	authenticator, err := auth.NewAuthenticator(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("error initializing authenticator: %w", err)
+	}
+
+	// Initialize the process monitor with cfg and authenticator
+	mon, err := monitor.NewProcessMonitor(cfg, authenticator)
+	if err != nil {
+		return nil, fmt.Errorf("error initializing process monitor: %w", err)
+	}
+
+	return mon, nil
+}
+
+// displayProcesses formats and prints process information
+func displayProcesses(processes []monitor.ProcessInfo) {
+	fmt.Println("Active Processes:")
+	if len(processes) == 0 {
+		fmt.Println("  No monitored processes found")
+	} else {
+		for _, p := range processes {
+			status := "Locked"
+			if p.Allowed {
+				status = "Allowed"
+			}
+			fmt.Printf("PID: %d | Command: %s | Status: %s\n", p.PID, p.Command, status)
+		}
+	}
+	fmt.Println("-----")
+}
+
 func startMonitoringCmd() tea.Cmd {
 	return func() tea.Msg {
-		// In a real implementation, this would start the actual monitoring
-		// For now, we just return a success message
+		// Create and initialize monitor if not already done
+		if processMonitor == nil {
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				return errorMsg{err: fmt.Errorf("failed to load config: %w", err)}
+			}
+			
+			mon, err := initializeMonitor(cfg)
+			if err != nil {
+				return errorMsg{err: err}
+			}
+			
+			processMonitor = mon
+		}
+		
+		// Start the monitor
+		if err := processMonitor.Start(); err != nil {
+			return errorMsg{err: fmt.Errorf("failed to start monitor: %w", err)}
+		}
+		
 		return monitorStartedMsg{}
 	}
 }
 
 func pollProcessesCmd() tea.Cmd {
 	return func() tea.Msg {
-		// In a real implementation, this would poll the monitor for processes
-		// For now, we return mock data
-		return processUpdateMsg{
-			processes: []monitor.ProcessInfo{
-				{PID: 1234, Command: "/usr/bin/firefox", Allowed: false},
-				{PID: 1235, Command: "/usr/bin/chromium", Allowed: true},
-			},
+		if processMonitor == nil {
+			return errorMsg{err: errors.New("process monitor not initialized")}
 		}
+		
+		processes, err := processMonitor.PollProcesses()
+		if err != nil {
+			return errorMsg{err: fmt.Errorf("failed to poll processes: %w", err)}
+		}
+		
+		return processUpdateMsg{processes: processes}
 	}
 }
 
 func newRunCommand() *cobra.Command {
+	var nonInteractive bool
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run the application monitor",
 		Long:  `Start monitoring processes and enforce application locks based on the configuration.`,
 		Run: func(cmd *cobra.Command, args []string) {
-			p := tea.NewProgram(initialRunModel(), tea.WithAltScreen())
-			if _, err := p.Run(); err != nil {
-				fmt.Printf("Error running application: %v\n", err)
+			// Load config first (needed for both modes)
+			cfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				fmt.Printf("Error loading config: %v\n", err)
 				os.Exit(1)
+			}
+			
+			// Initialize monitor (shared between modes)
+			mon, err := initializeMonitor(cfg)
+			if err != nil {
+				fmt.Printf("%v\n", err)
+				os.Exit(1)
+			}
+			processMonitor = mon
+			
+			// Start the monitor
+			if err := processMonitor.Start(); err != nil {
+				fmt.Printf("Error starting monitor: %v\n", err)
+				os.Exit(1)
+			}
+
+			if nonInteractive {
+				// Non-interactive mode: poll and display processes periodically
+				fmt.Println("Non-interactive mode: monitoring processes")
+				for {
+					processes, err := processMonitor.PollProcesses()
+					if err != nil {
+						fmt.Printf("Error polling processes: %v\n", err)
+					} else {
+						displayProcesses(processes)
+					}
+					time.Sleep(1 * time.Second)
+				}
+			} else {
+				// Interactive mode: detect TTY and use Bubble Tea alt-screen mode if available
+				var opts []tea.ProgramOption
+				if isatty.IsTerminal(os.Stdin.Fd()) {
+					opts = []tea.ProgramOption{tea.WithAltScreen()}
+				}
+				p := tea.NewProgram(initialRunModel(), opts...)
+				if _, err := p.Run(); err != nil {
+					fmt.Printf("Error running application: %v\n", err)
+					os.Exit(1)
+				}
 			}
 		},
 	}
-
+	cmd.Flags().BoolVarP(&nonInteractive, "non-interactive", "n", false, "Run in non-interactive mode")
 	return cmd
 }

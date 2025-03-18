@@ -53,6 +53,10 @@ type ProcessMonitor struct {
 
 	// Logging
 	logger *logging.Logger
+
+	// Add a field to track monitored processes
+	monitoredProcesses map[int]ProcessInfo
+	monitoredMu        sync.RWMutex
 }
 
 // Netlink message header
@@ -102,12 +106,13 @@ func NewProcessMonitor(cfg *config.Config, authenticator *auth.Authenticator) (*
 	}
 
 	return &ProcessMonitor{
-		config:        cfg,
-		authenticator: authenticator,
-		guiManager:    guiManager,
-		handledPids:   make(map[int]string),
-		stopCh:        make(chan struct{}),
-		logger:        logger,
+		config:             cfg,
+		authenticator:      authenticator,
+		guiManager:         guiManager,
+		handledPids:        make(map[int]string),
+		monitoredProcesses: make(map[int]ProcessInfo),
+		stopCh:             make(chan struct{}),
+		logger:             logger,
 	}, nil
 }
 
@@ -312,6 +317,16 @@ func (m *ProcessMonitor) processNetlinkMessage(buf []byte) error {
 	return nil
 }
 
+// isBlockedApp checks if an executable path matches any blocked app
+func (m *ProcessMonitor) isBlockedApp(execPath string) (bool, config.BlockedApp) {
+	for _, blockedApp := range m.config.BlockedApps {
+		if strings.HasPrefix(execPath, blockedApp.Path) {
+			return true, blockedApp
+		}
+	}
+	return false, config.BlockedApp{}
+}
+
 // handleExecEvent processes a process execution event
 func (m *ProcessMonitor) handleExecEvent(pid int) {
 	// Check if this is a process we're interested in
@@ -323,13 +338,15 @@ func (m *ProcessMonitor) handleExecEvent(pid int) {
 	m.logger.Debugf("Process executed: PID=%d, Path=%s", pid, execPath)
 
 	// Check if this is a blocked app
-	for _, blockedApp := range m.config.BlockedApps {
-		if strings.HasPrefix(execPath, blockedApp.Path) {
-			// Found a match, handle it
-			m.logger.Infof("Blocked application detected: %s (PID: %d)", execPath, pid)
-			m.handleBlockedApp(pid, blockedApp, execPath)
-			break
-		}
+	isBlocked, blockedApp := m.isBlockedApp(execPath)
+	if isBlocked {
+		// Found a match, handle it
+		m.logger.Infof("Blocked application detected: %s (PID: %d)", execPath, pid)
+		
+		// Update monitored processes list
+		m.updateMonitoredProcess(pid, execPath, false)
+		
+		m.handleBlockedApp(pid, blockedApp, execPath)
 	}
 }
 
@@ -342,6 +359,26 @@ func (m *ProcessMonitor) getProcessExePath(pid int) (string, error) {
 	}
 
 	return execPath, nil
+}
+
+// updateMonitoredProcess adds or updates a process in the monitored processes map
+func (m *ProcessMonitor) updateMonitoredProcess(pid int, command string, allowed bool) {
+	m.monitoredMu.Lock()
+	defer m.monitoredMu.Unlock()
+	
+	m.monitoredProcesses[pid] = ProcessInfo{
+		PID:     pid,
+		Command: command,
+		Allowed: allowed,
+	}
+}
+
+// removeMonitoredProcess removes a process from the monitored processes map
+func (m *ProcessMonitor) removeMonitoredProcess(pid int) {
+	m.monitoredMu.Lock()
+	defer m.monitoredMu.Unlock()
+	
+	delete(m.monitoredProcesses, pid)
 }
 
 // handleBlockedApp processes a blocked application execution
@@ -413,9 +450,29 @@ func (m *ProcessMonitor) handleBlockedApp(pid int, app config.BlockedApp, execPa
 		// Authentication successful, let the process continue
 		m.logger.Infof("Authentication successful for %s, resuming process %d", displayName, pid)
 		syscall.Kill(pid, syscall.SIGCONT)
+		
+		// Update process status to allowed
+		m.updateMonitoredProcess(pid, execPath, true)
 	} else {
 		// Authentication failed, kill the process
 		m.logger.Infof("Authentication failed for %s, terminating process %d", displayName, pid)
 		syscall.Kill(pid, syscall.SIGTERM)
+		
+		// Remove from monitored processes
+		m.removeMonitoredProcess(pid)
 	}
+}
+
+// PollProcesses returns the current state of monitored processes
+func (m *ProcessMonitor) PollProcesses() ([]ProcessInfo, error) {
+	m.monitoredMu.RLock()
+	defer m.monitoredMu.RUnlock()
+	
+	// Create a copy of the monitored processes
+	processes := make([]ProcessInfo, 0, len(m.monitoredProcesses))
+	for _, process := range m.monitoredProcesses {
+		processes = append(processes, process)
+	}
+	
+	return processes, nil
 }

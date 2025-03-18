@@ -1,7 +1,3 @@
-## Golang Notes
-
-The `io/ioutil` package is deprecated; functions have been moved to the `io` and `os` packages.
-
 ## Overview
 Applock-go is a Linux security tool designed to control access to specific applications by requiring cryptographic authentication before they can be launched. It monitors process execution system-wide and intercepts launches of configured applications.
 

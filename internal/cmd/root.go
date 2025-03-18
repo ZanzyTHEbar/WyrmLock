@@ -25,7 +25,8 @@ applications. When a protected application is launched, it is suspended until
 the user provides the correct authentication.`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			// Check if running as root for commands that require it
-			if cmd.Name() != "version" && cmd.Name() != "help" && cmd.Name() != "create-config" && os.Geteuid() != 0 {
+			if cmd.Name() != "version" && cmd.Name() != "help" && cmd.Name() != "create-config" && 
+			   cmd.Name() != "keychain" && os.Geteuid() != 0 {
 				fmt.Fprintln(os.Stderr, "This command requires root privileges to run")
 				os.Exit(1)
 			}
@@ -44,6 +45,7 @@ the user provides the correct authentication.`,
 		newListCommand(),
 		newVersionCommand(),
 		newConfigCommand(),
+		newKeychainCommand(), // Add the new keychain command
 	)
 
 	return rootCmd
