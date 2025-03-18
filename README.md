@@ -2,6 +2,9 @@
 
 A Linux security tool designed to control access to specific applications by requiring cryptographic authentication before they can be launched. It monitors process execution system-wide and intercepts launches of configured applications.
 
+> [!WARNING]\
+> This project is in early development and may not be fully functional. Use at your own risk.
+
 ## Features
 
 - **Process Monitoring**: Uses Linux kernel's proc connector to monitor process execution events
@@ -17,6 +20,42 @@ A Linux security tool designed to control access to specific applications by req
 - Kernel-level monitoring ensures applications can't bypass the lock
 - Integration with Linux keychain ensures secure storage of secrets
 - Process suspension allows authentication before the application starts
+
+## Feature Status Checklist
+
+### Implemented Features
+- [x] Command-line interface with multiple subcommands
+- [x] Process monitoring via Linux proc connector
+- [x] Configuration management
+- [x] Multiple GUI dialog options (GTK, WebKit2GTK, AppIndicator)
+- [x] Traditional password hashing (bcrypt, argon2id, scrypt, PBKDF2)
+- [x] Support for both keychain and file-based secret storage
+- [x] Process suspension and resumption
+- [x] Configuration validation
+- [x] Blocked application listing
+- [x] Interactive configuration editor
+
+### To Be Implemented
+- [ ] Complete Zero-Knowledge Proof authentication via Themis
+- [ ] Comprehensive error handling and recovery
+- [ ] Proper signal handling for graceful termination
+- [ ] Brute force protection mechanisms
+- [ ] More granular access controls
+- [ ] Enhanced logging and audit trails
+- [ ] Child process tracking
+- [ ] Application path verification (beyond name matching)
+- [ ] Automated testing suite
+
+### Future Work
+- [ ] Biometric authentication integration
+- [ ] Smart card/YubiKey support
+- [ ] Graphical management interface
+- [ ] Time-based access restrictions
+- [ ] Usage pattern monitoring
+- [ ] Library injection detection
+- [ ] Detailed access logs and reporting
+- [ ] User/group based permissions
+- [ ] Integration with system notification services
 
 ## Requirements
 
@@ -65,23 +104,56 @@ sudo systemctl enable --now applock-go.service
 
 ### Configuration
 
-The default configuration file is installed at `/etc/applock-go/config.yaml`. You can edit this file to configure which applications should be locked and how authentication should work.
+The default configuration file is installed at `/etc/applock-go/config.toml`. You can edit this file to configure which applications should be locked and how authentication should work.
 
 Example configuration:
 
-```yaml
-blockedApps:
-  - path: /usr/bin/firefox
-    displayName: Firefox
-  - path: /usr/bin/chromium
-    displayName: Chromium
+```toml
+# Applock-go Configuration Example
 
-auth:
-  useZeroKnowledgeProof: true
-  guiType: gtk
+# List of applications that should be locked
+[[blockedApps]]
+path = "/usr/bin/firefox"
+displayName = "Firefox"
 
-keychainService: applock-go
-keychainAccount: default
+[[blockedApps]]
+path = "/usr/bin/chromium"
+displayName = "Chromium"
+
+[[blockedApps]]
+path = "/usr/bin/google-chrome"
+displayName = "Google Chrome"
+
+[[blockedApps]]
+path = "/usr/bin/thunderbird"
+displayName = "Thunderbird"
+
+# Authentication settings
+[auth]
+# Whether to use zero-knowledge proof (Themis Secure Comparator)
+# This enhances privacy by ensuring the app never learns your password
+useZeroKnowledgeProof = true
+
+# Path to store the secret if not using keychain
+# Only used if keychainService/keychainAccount are not specified
+secretPath = "/etc/applock-go/secret"
+
+# Hash algorithm to use when not using ZKP
+# Only used if useZeroKnowledgeProof is false
+# Options: bcrypt, argon2id, scrypt, pbkdf2
+hashAlgorithm = "argon2id"
+
+# GUI type to use for authentication dialogs
+# Options: gtk, webkit2gtk, indicator
+guiType = "gtk"
+
+# Keychain integration (Linux keyring)
+# To use keychain integration, specify both service and account
+keychainService = "applock-go"
+keychainAccount = "default"
+
+# Uncomment and set to true to enable verbose logging
+# verbose = true
 ```
 
 ## Usage
