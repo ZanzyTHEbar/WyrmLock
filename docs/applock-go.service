@@ -1,12 +1,6 @@
 [Unit]
-Description=Applock-go Application Locking Service
-Documentation=https://applock-go.readthedocs.io/en/latest/
-Wants=network-online.target
-Requires=network-online.target
-After=network-online.target
-Wants=network.target
-Requires=network.target
-# This service should start after the network is up and running
+Description=Applock-Go Application Security Daemon
+Documentation=https://github.com/yourusername/applock-go
 After=network.target
 
 [Service]
@@ -14,7 +8,7 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=/etc/applock-go
-ExecStart=/usr/local/bin/applock-go -c /etc/applock-go/config.toml run
+ExecStart=/usr/local/bin/applock-go daemon
 StandardOutput=journal
 StandardError=journal
 Restart=on-failure
@@ -24,10 +18,13 @@ KillSignal=SIGINT
 TimeoutStopSec=3
 
 # Security hardening
-CapabilityBoundingSet=CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
-ProtectSystem=strict
-ReadWritePaths=/etc/applock-go
-ProtectHome=true
+CapabilityBoundingSet=CAP_SYS_PTRACE CAP_KILL CAP_SYS_ADMIN
+AmbientCapabilities=CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_SYS_ADMIN
+SecureBits=keep-caps
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/var/run /etc/applock-go
+ProtectHome=read-only
 ProtectControlGroups=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
@@ -36,6 +33,12 @@ RestrictNamespaces=true
 RestrictRealtime=true
 MemoryDenyWriteExecute=true
 PrivateTmp=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+# Limit resource usage
+LimitNOFILE=1024
+MemoryLimit=256M
 
 [Install]
 WantedBy=multi-user.target

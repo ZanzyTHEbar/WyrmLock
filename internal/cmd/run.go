@@ -15,6 +15,8 @@ import (
 
 	"applock-go/internal/auth"
 	"applock-go/internal/config"
+	"applock-go/internal/daemon"
+	"applock-go/internal/logging"
 	"applock-go/internal/monitor"
 )
 
@@ -152,11 +154,8 @@ func (m runModel) View() string {
 	}
 
 	blockedApps := "\nProtecting applications:\n"
-	for _, app := range m.config.BlockedApps {
-		name := app.DisplayName
-		if name == "" {
-			name = app.Path
-		}
+	for _, app := range m.config.Monitor.ProtectedApps {
+		name := app
 		blockedApps += fmt.Sprintf("  • %s\n", name)
 	}
 
@@ -199,10 +198,14 @@ func loadConfigCmd(path string) tea.Cmd {
 	}
 }
 
-// Global monitor instance used by both interactive and non-interactive modes
-var processMonitor *monitor.ProcessMonitor
+// Global instances used by both interactive and non-interactive modes
+var (
+	processMonitor *monitor.ProcessMonitor
+	daemonInstance *daemon.Daemon
+	clientInstance *daemon.Client
+)
 
-// initializeMonitor creates and initializes the process monitor
+// initializeMonitor creates and initializes the process monitor for legacy mode (no privilege separation)
 func initializeMonitor(cfg *config.Config) (*monitor.ProcessMonitor, error) {
 	// Create authenticator using cfg
 	authenticator, err := auth.NewAuthenticator(cfg)
@@ -217,6 +220,34 @@ func initializeMonitor(cfg *config.Config) (*monitor.ProcessMonitor, error) {
 	}
 
 	return mon, nil
+}
+
+// initializeDaemon creates and initializes the privileged daemon
+func initializeDaemon(cfg *config.Config) (*daemon.Daemon, error) {
+	// Create the daemon instance
+	d, err := daemon.NewDaemon(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("error initializing daemon: %w", err)
+	}
+
+	return d, nil
+}
+
+// initializeClient creates and initializes the unprivileged client
+func initializeClient(cfg *config.Config) (*daemon.Client, error) {
+	// Create authenticator
+	authenticator, err := auth.NewAuthenticator(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("error initializing authenticator: %w", err)
+	}
+
+	// Create the client instance
+	c, err := daemon.NewClient(cfg, authenticator)
+	if err != nil {
+		return nil, fmt.Errorf("error initializing client: %w", err)
+	}
+
+	return c, nil
 }
 
 // displayProcesses formats and prints process information
@@ -244,20 +275,20 @@ func startMonitoringCmd() tea.Cmd {
 			if err != nil {
 				return errorMsg{err: fmt.Errorf("failed to load config: %w", err)}
 			}
-			
+
 			mon, err := initializeMonitor(cfg)
 			if err != nil {
 				return errorMsg{err: err}
 			}
-			
+
 			processMonitor = mon
 		}
-		
+
 		// Start the monitor
 		if err := processMonitor.Start(); err != nil {
 			return errorMsg{err: fmt.Errorf("failed to start monitor: %w", err)}
 		}
-		
+
 		return monitorStartedMsg{}
 	}
 }
@@ -267,70 +298,214 @@ func pollProcessesCmd() tea.Cmd {
 		if processMonitor == nil {
 			return errorMsg{err: errors.New("process monitor not initialized")}
 		}
-		
+
 		processes, err := processMonitor.PollProcesses()
 		if err != nil {
 			return errorMsg{err: fmt.Errorf("failed to poll processes: %w", err)}
 		}
-		
+
 		return processUpdateMsg{processes: processes}
 	}
 }
 
 func newRunCommand() *cobra.Command {
-	var nonInteractive bool
+	var (
+		nonInteractive bool
+		daemonMode     bool
+		clientMode     bool
+		legacyMode     bool
+	)
+
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run the application monitor",
-		Long:  `Start monitoring processes and enforce application locks based on the configuration.`,
+		Long: `Start monitoring processes and enforce application locks based on the configuration.
+
+This command can run in either daemon mode (privileged) or client mode (unprivileged),
+enabling proper privilege separation for increased security. 
+
+In daemon mode (--daemon), it runs as root and monitors processes but delegates
+authentication to the client.
+
+In client mode (--client), it runs without root privileges and handles user
+authentication requests from the daemon.
+
+Legacy mode (--legacy) runs everything in a single process with root privileges.`,
+
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			// Validate mode flags
+			modes := 0
+			if daemonMode {
+				modes++
+			}
+			if clientMode {
+				modes++
+			}
+			if legacyMode {
+				modes++
+			}
+
+			if modes > 1 {
+				return fmt.Errorf("cannot specify multiple modes: choose one of --daemon, --client, or --legacy")
+			}
+
+			// Default to client mode if nothing specified
+			if modes == 0 {
+				clientMode = true
+			}
+
+			// Validate privileges
+			if daemonMode && os.Geteuid() != 0 {
+				return fmt.Errorf("daemon mode requires root privileges")
+			}
+
+			if legacyMode && os.Geteuid() != 0 {
+				return fmt.Errorf("legacy mode requires root privileges")
+			}
+
+			return nil
+		},
+
 		Run: func(cmd *cobra.Command, args []string) {
-			// Load config first (needed for both modes)
+			// Configure logger
+			logger := logging.NewLogger("applock", verbose)
+			logging.DefaultLogger = logger
+
+			// Load config
 			cfg, err := config.LoadConfig(configPath)
 			if err != nil {
 				fmt.Printf("Error loading config: %v\n", err)
 				os.Exit(1)
 			}
-			
-			// Initialize monitor (shared between modes)
-			mon, err := initializeMonitor(cfg)
-			if err != nil {
-				fmt.Printf("%v\n", err)
-				os.Exit(1)
-			}
-			processMonitor = mon
-			
-			// Start the monitor
-			if err := processMonitor.Start(); err != nil {
-				fmt.Printf("Error starting monitor: %v\n", err)
-				os.Exit(1)
-			}
 
-			if nonInteractive {
-				// Non-interactive mode: poll and display processes periodically
-				fmt.Println("Non-interactive mode: monitoring processes")
-				for {
-					processes, err := processMonitor.PollProcesses()
-					if err != nil {
-						fmt.Printf("Error polling processes: %v\n", err)
-					} else {
-						displayProcesses(processes)
-					}
-					time.Sleep(1 * time.Second)
-				}
+			// Update config with command line flags
+			cfg.Verbose = verbose
+
+			// Run in the selected mode
+			if daemonMode {
+				runDaemonMode(cfg, nonInteractive)
+			} else if clientMode {
+				runClientMode(cfg, nonInteractive)
 			} else {
-				// Interactive mode: detect TTY and use Bubble Tea alt-screen mode if available
-				var opts []tea.ProgramOption
-				if isatty.IsTerminal(os.Stdin.Fd()) {
-					opts = []tea.ProgramOption{tea.WithAltScreen()}
-				}
-				p := tea.NewProgram(initialRunModel(), opts...)
-				if _, err := p.Run(); err != nil {
-					fmt.Printf("Error running application: %v\n", err)
-					os.Exit(1)
-				}
+				runLegacyMode(cfg, nonInteractive)
 			}
 		},
 	}
+
+	// Add mode flags
+	cmd.Flags().BoolVar(&daemonMode, "daemon", false, "Run in daemon mode (privileged)")
+	cmd.Flags().BoolVar(&clientMode, "client", false, "Run in client mode (unprivileged)")
+	cmd.Flags().BoolVar(&legacyMode, "legacy", false, "Run in legacy mode (single process)")
 	cmd.Flags().BoolVarP(&nonInteractive, "non-interactive", "n", false, "Run in non-interactive mode")
+
 	return cmd
+}
+
+// runDaemonMode runs the application in daemon mode (privileged)
+func runDaemonMode(cfg *config.Config, nonInteractive bool) {
+	fmt.Println("Starting Applock in daemon mode (privileged)")
+
+	// Initialize daemon
+	d, err := initializeDaemon(cfg)
+	if err != nil {
+		fmt.Printf("Failed to initialize daemon: %v\n", err)
+		os.Exit(1)
+	}
+	daemonInstance = d
+
+	// Register process event handler
+	daemonInstance.RegisterProcessEventHandler()
+
+	// Start the daemon
+	if err := daemonInstance.Start(); err != nil {
+		fmt.Printf("Failed to start daemon: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("Daemon started successfully - waiting for client connections")
+	fmt.Println("Press Ctrl+C to stop the daemon")
+
+	// Block until interrupted
+	select {}
+}
+
+// runClientMode runs the application in client mode (unprivileged)
+func runClientMode(cfg *config.Config, nonInteractive bool) {
+	fmt.Println("Starting Applock in client mode (unprivileged)")
+
+	// Initialize client
+	c, err := initializeClient(cfg)
+	if err != nil {
+		fmt.Printf("Failed to initialize client: %v\n", err)
+		os.Exit(1)
+	}
+	clientInstance = c
+
+	// Connect to daemon
+	if err := clientInstance.Connect(); err != nil {
+		fmt.Printf("Failed to connect to daemon: %v\n", err)
+		fmt.Println("Make sure the daemon is running with 'sudo applock-go run --daemon'")
+		os.Exit(1)
+	}
+
+	// Ping daemon to test connection
+	connected, err := clientInstance.Ping()
+	if err != nil {
+		fmt.Printf("Failed to ping daemon: %v\n", err)
+		os.Exit(1)
+	}
+	if !connected {
+		fmt.Println("Failed to get response from daemon")
+		os.Exit(1)
+	}
+
+	fmt.Println("Connected to daemon successfully")
+	fmt.Println("Press Ctrl+C to stop the client")
+
+	// Block until interrupted
+	select {}
+}
+
+// runLegacyMode runs the application in legacy mode (single process, no privilege separation)
+func runLegacyMode(cfg *config.Config, nonInteractive bool) {
+	fmt.Println("Starting Applock in legacy mode (single process)")
+
+	// Initialize monitor (shared between modes)
+	mon, err := initializeMonitor(cfg)
+	if err != nil {
+		fmt.Printf("%v\n", err)
+		os.Exit(1)
+	}
+	processMonitor = mon
+
+	// Start the monitor
+	if err := processMonitor.Start(); err != nil {
+		fmt.Printf("Error starting monitor: %v\n", err)
+		os.Exit(1)
+	}
+
+	if nonInteractive {
+		// Non-interactive mode: poll and display processes periodically
+		fmt.Println("Non-interactive mode: monitoring processes")
+		for {
+			processes, err := processMonitor.PollProcesses()
+			if err != nil {
+				fmt.Printf("Error polling processes: %v\n", err)
+			} else {
+				displayProcesses(processes)
+			}
+			time.Sleep(1 * time.Second)
+		}
+	} else {
+		// Interactive mode: detect TTY and use Bubble Tea alt-screen mode if available
+		var opts []tea.ProgramOption
+		if isatty.IsTerminal(os.Stdin.Fd()) {
+			opts = []tea.ProgramOption{tea.WithAltScreen()}
+		}
+		p := tea.NewProgram(initialRunModel(), opts...)
+		if _, err := p.Run(); err != nil {
+			fmt.Printf("Error running application: %v\n", err)
+			os.Exit(1)
+		}
+	}
 }

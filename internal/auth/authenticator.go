@@ -1,11 +1,13 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"applock-go/internal/config"
 	"applock-go/internal/keychain"
@@ -15,8 +17,16 @@ import (
 
 // Common errors
 var (
-	ErrAuthFailed     = errors.New("authentication failed")
-	ErrSecretNotFound = errors.New("secret not found")
+	ErrAuthFailed        = errors.New("authentication failed")
+	ErrSecretNotFound    = errors.New("secret not found")
+	ErrTimeout           = errors.New("authentication timed out")
+	ErrMaxRetries        = errors.New("max authentication retries exceeded")
+)
+
+// Default values for brute force protection
+const (
+	DefaultMaxAuthAttempts  = 5
+	DefaultLockoutDuration  = 5 * time.Minute
 )
 
 // Authenticator provides methods for authenticating users
@@ -29,12 +39,19 @@ type Authenticator struct {
 
 	// Optional keychain access
 	keychainIntegration *keychain.KeychainIntegration
+	
+	// Brute force protection
+	bruteForceProtection *BruteForceProtection
 }
 
 // NewAuthenticator creates a new authenticator with the given configuration
 func NewAuthenticator(cfg *config.Config) (*Authenticator, error) {
 	auth := &Authenticator{
 		config: cfg,
+		bruteForceProtection: NewBruteForceProtection(
+			DefaultMaxAuthAttempts, 
+			DefaultLockoutDuration,
+		),
 	}
 
 	// Initialize based on configuration
@@ -84,6 +101,10 @@ func (a *Authenticator) AuthenticateZKP(userInput []byte) (bool, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	// Create a context with timeout for the authentication process
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	// Get the stored secret
 	secret, err := a.getSecret()
 	if err != nil {
@@ -123,7 +144,22 @@ func (a *Authenticator) AuthenticateZKP(userInput []byte) (bool, error) {
 
 	// Continue the protocol until it's completed
 	inProgress := true
+	maxIterations := 10 // Prevent infinite loops
+	iterations := 0
+	
 	for inProgress {
+		// Check for timeout or too many iterations
+		if iterations >= maxIterations {
+			return false, ErrMaxRetries
+		}
+		
+		select {
+		case <-ctx.Done():
+			return false, ErrTimeout
+		default:
+			// Continue with the protocol
+		}
+		
 		serverData, err2 = serverComparator.Proceed(clientData)
 		if err2 != nil {
 			return false, fmt.Errorf("server comparison failed: %w", err2)
@@ -165,6 +201,7 @@ func (a *Authenticator) AuthenticateZKP(userInput []byte) (bool, error) {
 
 		// If we got here, we need to continue the protocol
 		inProgress = (clientResult == compare.NotReady)
+		iterations++
 	}
 
 	// We shouldn't reach here, but just in case
@@ -172,13 +209,48 @@ func (a *Authenticator) AuthenticateZKP(userInput []byte) (bool, error) {
 }
 
 // Authenticate verifies if the provided user input matches the stored secret
-func (a *Authenticator) Authenticate(userInput []byte) (bool, error) {
-	if a.config.Auth.UseZeroKnowledgeProof {
-		return a.AuthenticateZKP(userInput)
+func (a *Authenticator) Authenticate(userInput []byte, appPath string) (bool, error) {
+	// Add basic input validation
+	if len(userInput) == 0 {
+		return false, errors.New("empty authentication input")
+	}
+	
+	// Check brute force protection
+	if err := a.bruteForceProtection.CheckAttempt(appPath); err != nil {
+		if errors.Is(err, ErrMaxAttemptsExceeded) || errors.Is(err, ErrTempLockout) {
+			// Get the lockout duration if applicable
+			lockoutDuration := a.bruteForceProtection.GetLockoutDuration(appPath)
+			if lockoutDuration > 0 {
+				return false, fmt.Errorf("%w: locked out for %s", 
+					ErrTempLockout, lockoutDuration.Round(time.Second))
+			}
+			return false, err
+		}
+		// Some other unexpected error
+		return false, fmt.Errorf("error checking brute force protection: %w", err)
 	}
 
-	// Fall back to traditional password hashing
-	return a.AuthenticateTraditional(userInput)
+	var authSuccess bool
+	var authErr error
+	
+	if a.config.Auth.UseZeroKnowledgeProof {
+		authSuccess, authErr = a.AuthenticateZKP(userInput)
+	} else {
+		// Fall back to traditional password hashing
+		authSuccess, authErr = a.AuthenticateTraditional(userInput)
+	}
+	
+	// Record success or failure for brute force protection
+	if authErr != nil {
+		// Don't count errors as failures
+		return false, authErr
+	} else if authSuccess {
+		a.bruteForceProtection.RecordSuccess(appPath)
+	} else {
+		a.bruteForceProtection.RecordFailure(appPath)
+	}
+	
+	return authSuccess, nil
 }
 
 // AuthenticateTraditional authenticates a user using traditional password hashing
@@ -272,4 +344,19 @@ func (a *Authenticator) SetSecret(secret []byte) error {
 	return nil
 }
 
-// Hash comparison functions will be implemented in separate file
+// GetRemainingAttempts returns the number of attempts remaining before lockout
+func (a *Authenticator) GetRemainingAttempts(appPath string) int {
+	return a.bruteForceProtection.GetRemainingAttempts(appPath)
+}
+
+// ResetAttempts resets the brute force protection for a specific app
+func (a *Authenticator) ResetAttempts(appPath string) {
+	a.bruteForceProtection.ResetAttempts(appPath)
+}
+
+// ClearMemory securely wipes a byte slice
+func ClearMemory(data []byte) {
+	for i := range data {
+		data[i] = 0
+	}
+}

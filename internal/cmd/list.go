@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
+	"path/filepath"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -67,13 +67,9 @@ func (m listModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Populate table rows
 		rows := []table.Row{}
-		for _, app := range m.cfg.BlockedApps {
-			displayName := app.DisplayName
-			if displayName == "" {
-				// Extract filename from path if no display name
-				displayName = app.Path[strings.LastIndex(app.Path, "/")+1:]
-			}
-			rows = append(rows, table.Row{displayName, app.Path})
+		for _, app := range m.cfg.Monitor.ProtectedApps {
+			displayName := filepath.Base(app)
+			rows = append(rows, table.Row{displayName, app})
 		}
 		m.table.SetRows(rows)
 		return m, nil

@@ -24,6 +24,7 @@ A Linux security tool designed to control access to specific applications by req
 ## Feature Status Checklist
 
 ### Implemented Features
+
 - [x] Command-line interface with multiple subcommands
 - [x] Process monitoring via Linux proc connector
 - [x] Configuration management
@@ -36,6 +37,7 @@ A Linux security tool designed to control access to specific applications by req
 - [x] Interactive configuration editor
 
 ### To Be Implemented
+
 - [ ] Complete Zero-Knowledge Proof authentication via Themis
 - [ ] Comprehensive error handling and recovery
 - [ ] Proper signal handling for graceful termination
@@ -47,6 +49,7 @@ A Linux security tool designed to control access to specific applications by req
 - [ ] Automated testing suite
 
 ### Future Work
+
 - [ ] Biometric authentication integration
 - [ ] Smart card/YubiKey support
 - [ ] Graphical management interface
@@ -61,7 +64,7 @@ A Linux security tool designed to control access to specific applications by req
 
 - Linux operating system
 - Root privileges (required for proc connector access)
-- Go 1.17+ for building from source
+- Go 1.23+ for building from source
 - Themis library
 - One of the following dialog libraries depending on your UI preference:
   - GTK: zenity

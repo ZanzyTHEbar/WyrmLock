@@ -114,16 +114,13 @@ func (m configModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				// Update config with form values
-				blockApp := config.BlockedApp{
-					Path:        m.inputs[0].Value(),
-					DisplayName: m.inputs[1].Value(),
+				appPath := m.inputs[0].Value()
+
+				// Only add the app if path is not empty
+				if appPath != "" {
+					m.cfg.Monitor.ProtectedApps = append(m.cfg.Monitor.ProtectedApps, appPath)
 				}
-				
-				// Only add the blocked app if path is not empty
-				if blockApp.Path != "" {
-					m.cfg.BlockedApps = append(m.cfg.BlockedApps, blockApp)
-				}
-				
+
 				// Update keychain settings if provided
 				if m.inputs[2].Value() != "" {
 					m.cfg.KeychainService = m.inputs[2].Value()
@@ -138,7 +135,7 @@ func (m configModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.showConfirm = false
 					return m, nil
 				}
-				
+
 				m.saved = true
 				return m, tea.Quit
 			}
@@ -214,14 +211,10 @@ func (m configModel) View() string {
 	}
 
 	// Show current configuration if loaded successfully
-	if m.cfg != nil && len(m.cfg.BlockedApps) > 0 {
-		screen += "\nCurrently blocked applications:\n"
-		for i, app := range m.cfg.BlockedApps {
-			name := app.DisplayName
-			if name == "" {
-				name = app.Path
-			}
-			screen += fmt.Sprintf("%d. %s\n", i+1, name)
+	if m.cfg != nil && len(m.cfg.Monitor.ProtectedApps) > 0 {
+		screen += "\nCurrently protected applications:\n"
+		for i, app := range m.cfg.Monitor.ProtectedApps {
+			screen += fmt.Sprintf("%d. %s\n", i+1, app)
 		}
 	}
 
