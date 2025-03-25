@@ -8,29 +8,6 @@ import (
 	"applock-go/internal/testutil"
 )
 
-// createTestAuthenticatorWithMockedZKP creates an authenticator with a mocked ZKP implementation
-func createTestAuthenticatorWithMockedZKP(t *testing.T, secretContent []byte, mockAuthenticator *testutil.MockAuthenticator) (*auth.Authenticator, func(), error) {
-	// Create a temporary secret file
-	secretPath, cleanup := testutil.CreateTempFile(t, secretContent)
-	
-	// Create test config
-	cfg := testutil.SetupTestConfig(t)
-	cfg.Auth.UseZeroKnowledgeProof = true
-	cfg.Auth.SecretPath = secretPath
-	
-	// Create authenticator
-	authenticator, err := auth.NewAuthenticator(cfg)
-	if err != nil {
-		cleanup()
-		return nil, nil, err
-	}
-	
-	// Override the authenticator's ZKP implementation with our mock
-	// This requires modifying the package to expose a test hook
-	
-	return authenticator, cleanup, nil
-}
-
 // TestAuthenticateZKP tests the ZKP authentication process using a simplified approach
 // due to challenges with the real ZKP implementation in tests
 func TestAuthenticateZKP(t *testing.T) {
