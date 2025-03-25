@@ -383,9 +383,9 @@ Legacy mode (--legacy) runs everything in a single process with root privileges.
 
 			// Run in the selected mode
 			if daemonMode {
-				runDaemonMode(cfg, nonInteractive)
+				runDaemonMode(cfg)
 			} else if clientMode {
-				runClientMode(cfg, nonInteractive)
+				runClientMode(cfg)
 			} else {
 				runLegacyMode(cfg, nonInteractive)
 			}
@@ -402,7 +402,7 @@ Legacy mode (--legacy) runs everything in a single process with root privileges.
 }
 
 // runDaemonMode runs the application in daemon mode (privileged)
-func runDaemonMode(cfg *config.Config, nonInteractive bool) {
+func runDaemonMode(cfg *config.Config) {
 	fmt.Println("Starting Applock in daemon mode (privileged)")
 
 	// Initialize daemon
@@ -430,7 +430,7 @@ func runDaemonMode(cfg *config.Config, nonInteractive bool) {
 }
 
 // runClientMode runs the application in client mode (unprivileged)
-func runClientMode(cfg *config.Config, nonInteractive bool) {
+func runClientMode(cfg *config.Config) {
 	fmt.Println("Starting Applock in client mode (unprivileged)")
 
 	// Initialize client

@@ -46,6 +46,9 @@ type ProcessInfo struct {
 	ExecHash  string // SHA-256 hash of executable
 	ParentPID int    // Parent process ID
 	Allowed   bool   // Whether the process is allowed to run
+	StartTime int64  // Process start time for race condition prevention
+	CmdLine   string // Full command line for verification
+	State     string // Current process state
 }
 
 // ProcessState represents the current state of a process
@@ -54,6 +57,17 @@ const (
 	ProcessStateSuspended  = "suspended"
 	ProcessStateTerminated = "terminated"
 )
+
+// ProcessVerificationError represents process verification failures
+type ProcessVerificationError struct {
+	Reason string
+	PID    int
+	Detail string
+}
+
+func (e *ProcessVerificationError) Error() string {
+	return fmt.Sprintf("process verification failed for PID %d: %s (%s)", e.PID, e.Reason, e.Detail)
+}
 
 // ProcessEventHandler is a callback function for process events
 type ProcessEventHandler func(pid int, execPath string, displayName string)
@@ -120,7 +134,7 @@ type execProcEvent struct {
 // NewProcessMonitor creates a new process monitor
 func NewProcessMonitor(cfg *config.Config, authenticator *auth.Authenticator) (*ProcessMonitor, error) {
 	// Create GUI manager
-	guiManager, err := gui.NewManager(cfg.Auth.GuiType)
+	guiManager, err := gui.NewManager(gui.GuiType(cfg.Auth.GuiType))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GUI manager: %w", err)
 	}
@@ -457,50 +471,234 @@ func (m *ProcessMonitor) getProcessParentPID(pid int) (int, error) {
 	return ppid, nil
 }
 
-// handleExecEvent processes a process execution event
-func (m *ProcessMonitor) handleExecEvent(pid int) {
-	// Check if this is a process we're interested in
+// verifyProcess performs comprehensive process verification
+func (m *ProcessMonitor) verifyProcess(pid int, expectedPath string) error {
+	// Get current process info
+	procInfo, err := m.getProcessInfo(pid)
+	if err != nil {
+		return &ProcessVerificationError{
+			Reason: "failed to get process info",
+			PID:    pid,
+			Detail: err.Error(),
+		}
+	}
+
+	// Verify process exists and matches expected path
+	if procInfo.Command != expectedPath {
+		return &ProcessVerificationError{
+			Reason: "path mismatch",
+			PID:    pid,
+			Detail: fmt.Sprintf("expected %s, got %s", expectedPath, procInfo.Command),
+		}
+	}
+
+	// Verify process start time matches (if we have it)
+	if info, exists := m.monitoredProcesses[pid]; exists && info.StartTime > 0 {
+		if info.StartTime != procInfo.StartTime {
+			return &ProcessVerificationError{
+				Reason: "start time mismatch",
+				PID:    pid,
+				Detail: "process has been replaced",
+			}
+		}
+	}
+
+	// Verify executable hash
+	currentHash, err := m.getFileHash(procInfo.Command)
+	if err != nil {
+		return &ProcessVerificationError{
+			Reason: "failed to get file hash",
+			PID:    pid,
+			Detail: err.Error(),
+		}
+	}
+
+	if info, exists := m.monitoredProcesses[pid]; exists && info.ExecHash != "" {
+		if info.ExecHash != currentHash {
+			return &ProcessVerificationError{
+				Reason: "executable hash mismatch",
+				PID:    pid,
+				Detail: fmt.Sprintf("expected %s, got %s", info.ExecHash, currentHash),
+			}
+		}
+	}
+
+	// Verify command line arguments haven't changed
+	cmdLine, err := m.getProcessCmdLine(pid)
+	if err != nil {
+		return &ProcessVerificationError{
+			Reason: "failed to get command line",
+			PID:    pid,
+			Detail: err.Error(),
+		}
+	}
+
+	if info, exists := m.monitoredProcesses[pid]; exists && info.CmdLine != "" {
+		if info.CmdLine != cmdLine {
+			return &ProcessVerificationError{
+				Reason: "command line mismatch",
+				PID:    pid,
+				Detail: fmt.Sprintf("expected %s, got %s", info.CmdLine, cmdLine),
+			}
+		}
+	}
+
+	return nil
+}
+
+// getProcessInfo retrieves comprehensive process information
+func (m *ProcessMonitor) getProcessInfo(pid int) (*ProcessInfo, error) {
+	// Get basic process info
 	execPath, err := m.getProcessExePath(pid)
 	if err != nil {
-		m.logger.Debugf("Could not get process path for PID %d: %v", pid, err)
-		return // Can't get process path, ignore
+		return nil, fmt.Errorf("failed to get process path: %w", err)
 	}
 
-	m.logger.Debugf("Process executed: PID=%d, Path=%s", pid, execPath)
+	// Get process start time
+	startTime, err := m.getProcessStartTime(pid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get process start time: %w", err)
+	}
 
-	// Get additional process info for enhanced security
-	fileHash := ""
-	parentPID := 0
+	// Get command line
+	cmdLine, err := m.getProcessCmdLine(pid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get command line: %w", err)
+	}
 
 	// Get parent PID
-	if ppid, err := m.getProcessParentPID(pid); err == nil {
-		parentPID = ppid
-		m.logger.Debugf("Process %d parent PID: %d", pid, parentPID)
+	ppid, err := m.getProcessParentPID(pid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get parent PID: %w", err)
 	}
 
-	// Get file hash for verification
-	if hash, err := m.getFileHash(execPath); err == nil {
-		fileHash = hash
-		m.logger.Debugf("Process %d executable hash: %s", pid, fileHash)
-	} else {
-		m.logger.Debugf("Failed to compute hash for %s: %v", execPath, err)
+	// Get file hash
+	hash, err := m.getFileHash(execPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get file hash: %w", err)
 	}
 
-	// Check if this is a blocked app
-	isBlocked, _ := m.isBlockedApp(execPath, pid)
+	// Get process state
+	state, err := m.getProcessState(pid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get process state: %w", err)
+	}
+
+	return &ProcessInfo{
+		PID:       pid,
+		Command:   execPath,
+		ExecHash:  hash,
+		ParentPID: ppid,
+		StartTime: startTime,
+		CmdLine:   cmdLine,
+		State:     state,
+	}, nil
+}
+
+// getProcessStartTime retrieves the start time of a process
+func (m *ProcessMonitor) getProcessStartTime(pid int) (int64, error) {
+	// Read the stat file
+	statPath := fmt.Sprintf("/proc/%d/stat", pid)
+	statBytes, err := os.ReadFile(statPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read process stat: %w", err)
+	}
+
+	// Parse the stat file
+	stat := string(statBytes)
+	fields := strings.Fields(stat)
+	if len(fields) < 22 {
+		return 0, fmt.Errorf("invalid stat file format")
+	}
+
+	// Start time is the 22nd field
+	startTime, err := strconv.ParseInt(fields[21], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse start time: %w", err)
+	}
+
+	return startTime, nil
+}
+
+// getProcessCmdLine retrieves the full command line of a process
+func (m *ProcessMonitor) getProcessCmdLine(pid int) (string, error) {
+	// Read the cmdline file
+	cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", pid)
+	cmdlineBytes, err := os.ReadFile(cmdlinePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read process cmdline: %w", err)
+	}
+
+	// cmdline uses null bytes to separate arguments
+	args := strings.Split(string(cmdlineBytes), "\x00")
+	// Remove empty strings
+	var cleanArgs []string
+	for _, arg := range args {
+		if arg != "" {
+			cleanArgs = append(cleanArgs, arg)
+		}
+	}
+
+	return strings.Join(cleanArgs, " "), nil
+}
+
+// getProcessState retrieves the current state of a process
+func (m *ProcessMonitor) getProcessState(pid int) (string, error) {
+	// Read the stat file
+	statPath := fmt.Sprintf("/proc/%d/stat", pid)
+	statBytes, err := os.ReadFile(statPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read process stat: %w", err)
+	}
+
+	// Parse the stat file
+	stat := string(statBytes)
+	fields := strings.Fields(stat)
+	if len(fields) < 3 {
+		return "", fmt.Errorf("invalid stat file format")
+	}
+
+	// State is the 3rd field
+	switch fields[2] {
+	case "R":
+		return ProcessStateRunning, nil
+	case "S", "D":
+		return ProcessStateRunning, nil // Also count sleeping as running
+	case "T":
+		return ProcessStateSuspended, nil
+	case "Z", "X":
+		return ProcessStateTerminated, nil
+	default:
+		return "unknown", nil
+	}
+}
+
+// handleExecEvent processes a process execution event
+func (m *ProcessMonitor) handleExecEvent(pid int) {
+	// Get comprehensive process info
+	procInfo, err := m.getProcessInfo(pid)
+	if err != nil {
+		m.logger.Debugf("Could not get process info for PID %d: %v", pid, err)
+		return
+	}
+
+	m.logger.Debugf("Process executed: %+v", procInfo)
+
+	// Check if this is a protected app
+	isBlocked, appPath := m.isBlockedApp(procInfo.Command, pid)
 	if isBlocked {
-		// Found a match, handle it
-		m.logger.Infof("Blocked application detected: %s (PID: %d, Parent PID: %d, Hash: %s)",
-			execPath, pid, parentPID, fileHash)
+		m.logger.Infof("Protected application detected: %s (PID: %d, Parent PID: %d, Hash: %s)",
+			procInfo.Command, pid, procInfo.ParentPID, procInfo.ExecHash)
 
 		// Update monitored processes list with enhanced information
-		m.updateMonitoredProcessEnhanced(pid, execPath, false, fileHash, parentPID)
+		m.updateMonitoredProcessEnhanced(pid, appPath, false, procInfo.ExecHash, procInfo.ParentPID)
 
-		m.handleBlockedApp(pid, execPath)
+		// Handle the protected app
+		m.handleBlockedApp(pid, appPath)
 	} else {
-		// Log non-blocked process for debugging
-		m.logger.Debugf("Non-blocked process: %s (PID: %d, Parent PID: %d)",
-			execPath, pid, parentPID)
+		// Log non-protected process for debugging
+		m.logger.Debugf("Non-protected process: %s (PID: %d, Parent PID: %d)",
+			procInfo.Command, pid, procInfo.ParentPID)
 	}
 }
 
@@ -512,34 +710,6 @@ func (m *ProcessMonitor) getProcessExePath(pid int) (string, error) {
 		return "", fmt.Errorf("failed to read process exe path: %w", err)
 	}
 	return exePath, nil
-}
-
-// updateMonitoredProcess updates or adds a process to the monitored processes list
-func (m *ProcessMonitor) updateMonitoredProcess(pid int, execPath string, allowed bool) {
-	m.monitoredMu.Lock()
-	defer m.monitoredMu.Unlock()
-
-	// Get process hash
-	hash := ""
-	if data, err := os.ReadFile(execPath); err == nil {
-		h := sha256.New()
-		h.Write(data)
-		hash = fmt.Sprintf("%x", h.Sum(nil))
-	}
-
-	// Get parent PID
-	ppid := 0
-	if parentPID, err := m.getProcessParentPID(pid); err == nil {
-		ppid = parentPID
-	}
-
-	m.monitoredProcesses[pid] = ProcessInfo{
-		PID:       pid,
-		Command:   execPath,
-		Allowed:   allowed,
-		ExecHash:  hash,
-		ParentPID: ppid,
-	}
 }
 
 // updateMonitoredProcessEnhanced adds or updates a process in the monitored processes map with enhanced info
@@ -563,14 +733,14 @@ func (m *ProcessMonitor) removeMonitoredProcess(pid int) {
 	delete(m.monitoredProcesses, pid)
 }
 
-// handleBlockedApp processes a blocked application execution
+// handleBlockedApp processes a protected application execution
 func (m *ProcessMonitor) handleBlockedApp(pid int, execPath string) {
 	// Check if we're already handling this PID
 	m.handledMu.Lock()
 	if _, exists := m.handledPids[pid]; exists {
 		m.handledMu.Unlock()
 		m.logger.Debugf("Already handling PID %d, skipping", pid)
-		return // Already being handled
+		return
 	}
 
 	// Mark as being handled
@@ -584,47 +754,49 @@ func (m *ProcessMonitor) handleBlockedApp(pid int, execPath string) {
 		m.handledMu.Unlock()
 	}()
 
-	// Verify process still exists and path hasn't changed
-	currentPath, err := m.getProcessExePath(pid)
-	if err != nil {
-		m.logger.Warnf("Process %d no longer exists or is inaccessible: %v", pid, err)
-		return
-	}
-	if currentPath != execPath {
-		m.logger.Warnf("Process %d path changed from %s to %s - possible race condition",
-			pid, execPath, currentPath)
+	// Verify process integrity
+	if err := m.verifyProcess(pid, execPath); err != nil {
+		m.logger.Warnf("Process verification failed: %v", err)
+		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+			m.logger.Errorf("Failed to terminate unverified process %d: %v", pid, err)
+		}
 		return
 	}
 
-	// Get parent PID for verification
-	parentPID, err := m.getProcessParentPID(pid)
+	// Get process info for enhanced tracking
+	procInfo, err := m.getProcessInfo(pid)
 	if err != nil {
-		m.logger.Warnf("Could not verify parent PID for process %d: %v", pid, err)
+		m.logger.Warnf("Failed to get process info: %v", err)
+		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+			m.logger.Errorf("Failed to terminate process %d: %v", pid, err)
+		}
+		return
 	}
 
 	// Stop the process
-	m.logger.Infof("Suspending process %d (%s, parent PID: %d)", pid, execPath, parentPID)
+	m.logger.Infof("Suspending process %d (%s, parent PID: %d)", pid, execPath, procInfo.ParentPID)
 	if err := syscall.Kill(pid, syscall.SIGSTOP); err != nil {
 		m.logger.Errorf("Failed to stop process %d: %v", pid, err)
 		return
 	}
 
+	// Update process state
+	procInfo.State = ProcessStateSuspended
+	m.updateMonitoredProcessEnhanced(pid, execPath, false, procInfo.ExecHash, procInfo.ParentPID)
+
 	// Get display name
 	displayName := filepath.Base(execPath)
 
-	// Check if we're in daemon mode
+	// Handle daemon mode
 	if m.daemonMode {
-		// In daemon mode, notify the event handler
 		m.eventHandlerMu.RLock()
 		handler := m.eventHandler
 		m.eventHandlerMu.RUnlock()
 
 		if handler != nil {
-			// Call the handler in a goroutine to avoid blocking
 			go handler(pid, execPath, displayName)
 		} else {
 			m.logger.Error("No event handler registered in daemon mode")
-			// Default to terminating the process since we can't authenticate
 			if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 				m.logger.Errorf("Failed to terminate process %d: %v", pid, err)
 			}
@@ -632,99 +804,77 @@ func (m *ProcessMonitor) handleBlockedApp(pid int, execPath string) {
 		return
 	}
 
-	// Check for remaining authentication attempts
+	// Handle authentication in normal mode
+	if err := m.handleAuthentication(pid, execPath, displayName); err != nil {
+		m.logger.Errorf("Authentication failed: %v", err)
+		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+			m.logger.Errorf("Failed to terminate process %d: %v", pid, err)
+		}
+		m.removeMonitoredProcess(pid)
+	}
+}
+
+// handleAuthentication handles the authentication process for a protected app
+func (m *ProcessMonitor) handleAuthentication(pid int, execPath, displayName string) error {
+	// Check remaining attempts
 	remainingAttempts := 0
 	if m.authenticator != nil {
 		remainingAttempts = m.authenticator.GetRemainingAttempts(execPath)
 		if remainingAttempts <= 0 {
-			m.logger.Warnf("No authentication attempts remaining for %s, terminating process %d", displayName, pid)
-			if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-				m.logger.Errorf("Failed to terminate process %d: %v", pid, err)
-			}
-			m.logger.Info("Process terminated due to too many failed authentication attempts")
-			return
+			return fmt.Errorf("no authentication attempts remaining for %s", displayName)
 		}
 	}
 
-	// Normal mode with direct GUI and authentication
+	// Show authentication dialog
 	m.logger.Infof("Showing authentication dialog for %s (attempts remaining: %d)", displayName, remainingAttempts)
 	password, ok, err := m.guiManager.ShowAuthDialog(displayName)
 	if err != nil {
-		m.logger.Errorf("Error showing auth dialog: %v", err)
-		// Kill the process and return
-		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-			m.logger.Errorf("Failed to terminate process %d: %v", pid, err)
-		}
-		m.logger.Infof("Process %d terminated due to authentication dialog error", pid)
-		return
+		return fmt.Errorf("error showing auth dialog: %w", err)
 	}
 
-	// If dialog was cancelled
 	if !ok {
-		m.logger.Infof("Authentication cancelled by user for %s", displayName)
-		// Kill the process
-		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-			m.logger.Errorf("Failed to terminate process %d: %v", pid, err)
-		}
-		m.logger.Debug("Process terminated due to cancelled authentication")
-		return
+		return fmt.Errorf("authentication cancelled by user")
 	}
 
-	// Verify process still exists and path hasn't changed before authentication
-	currentPath, err = m.getProcessExePath(pid)
-	if err != nil || currentPath != execPath {
-		m.logger.Warnf("Process %d changed during authentication - terminating", pid)
-		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-			m.logger.Errorf("Failed to terminate process %d: %v", pid, err)
-		}
-		return
+	// Verify process hasn't changed during authentication
+	if err := m.verifyProcess(pid, execPath); err != nil {
+		return fmt.Errorf("process verification failed after dialog: %w", err)
 	}
 
 	// Authenticate
 	m.logger.Debug("Verifying authentication")
 	authenticated, err := m.authenticator.Authenticate([]byte(password), execPath)
 	if err != nil {
-		m.logger.Errorf("Authentication error: %v", err)
-		// Kill the process
-		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-			m.logger.Errorf("Failed to terminate process %d: %v", pid, err)
-		}
-		m.logger.Debug("Process terminated due to authentication error")
-		return
+		return fmt.Errorf("authentication error: %w", err)
 	}
 
-	if authenticated {
-		// Verify process one final time before allowing it
-		currentPath, err = m.getProcessExePath(pid)
-		if err != nil || currentPath != execPath {
-			m.logger.Warnf("Process %d changed after authentication - terminating", pid)
-			if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-				m.logger.Errorf("Failed to terminate process %d: %v", pid, err)
-			}
-			return
-		}
-
-		// Authentication successful, let the process continue
-		m.logger.Infof("Authentication successful for %s, resuming process %d", displayName, pid)
-		if err := syscall.Kill(pid, syscall.SIGCONT); err != nil {
-			m.logger.Errorf("Failed to resume process %d: %v", pid, err)
-			return
-		}
-
-		// Update process status to allowed
-		m.updateMonitoredProcess(pid, execPath, true)
-	} else {
-		// Authentication failed, kill the process
+	if !authenticated {
 		remainingAttempts = m.authenticator.GetRemainingAttempts(execPath)
-		m.logger.Infof("Authentication failed for %s (attempts remaining: %d), terminating process %d",
-			displayName, remainingAttempts, pid)
-		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-			m.logger.Errorf("Failed to terminate process %d: %v", pid, err)
-		}
-
-		// Remove from monitored processes
-		m.removeMonitoredProcess(pid)
+		return fmt.Errorf("authentication failed (attempts remaining: %d)", remainingAttempts)
 	}
+
+	// Final verification before resuming
+	if err := m.verifyProcess(pid, execPath); err != nil {
+		return fmt.Errorf("final process verification failed: %w", err)
+	}
+
+	// Resume the process
+	m.logger.Infof("Authentication successful for %s, resuming process %d", displayName, pid)
+	if err := syscall.Kill(pid, syscall.SIGCONT); err != nil {
+		return fmt.Errorf("failed to resume process: %w", err)
+	}
+
+	// Update process status
+	procInfo, err := m.getProcessInfo(pid)
+	if err != nil {
+		return fmt.Errorf("failed to get final process info: %w", err)
+	}
+
+	procInfo.Allowed = true
+	procInfo.State = ProcessStateRunning
+	m.updateMonitoredProcessEnhanced(pid, execPath, true, procInfo.ExecHash, procInfo.ParentPID)
+
+	return nil
 }
 
 // ResumeProcess resumes a suspended process (for daemon mode)

@@ -10,6 +10,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.19.0
+	github.com/syndtr/gocapability v0.0.0-20200815063812-42c35b437635
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/crypto v0.21.0
 )

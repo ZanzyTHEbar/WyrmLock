@@ -109,8 +109,8 @@ func compareScrypt(password, encodedHash []byte) (bool, error) {
 		return false, errors.New("invalid hash parameters")
 	}
 
-	var n, r, p int
-	_, err := fmt.Sscanf(params[0], "N=%d", &n)
+	var nValue, r, p int
+	_, err := fmt.Sscanf(params[0], "N=%d", &nValue)
 	if err != nil {
 		return false, errors.New("invalid N parameter")
 	}
@@ -136,8 +136,14 @@ func compareScrypt(password, encodedHash []byte) (bool, error) {
 		return false, fmt.Errorf("failed to decode hash: %w", err)
 	}
 
-	// Compute hash for comparison
-	computedHash, err := scrypt.Key(password, salt, 1<<uint(n), r, p, len(decodedHash))
+	// In scrypt, N is a power of 2 - we pass N as 1<<n, so we need to calculate log2(N)
+	n := nValue
+	if n < 16384 {
+		n = 16384 // Default to safer value if N is too small
+	}
+
+	// Compute hash for comparison - use directly the value parsed from hash
+	computedHash, err := scrypt.Key(password, salt, n, r, p, len(decodedHash))
 	if err != nil {
 		return false, fmt.Errorf("scrypt computation error: %w", err)
 	}
@@ -287,4 +293,30 @@ func generatePBKDF2Hash(password []byte) ([]byte, error) {
 		iterations, saltB64, hashB64)
 
 	return []byte(encodedHash), nil
+}
+
+// Compare compares a plaintext password with a hash of unknown algorithm
+// It detects the algorithm based on the hash format and calls the appropriate
+// comparison function
+func Compare(password, hash []byte) (bool, error) {
+	if len(hash) == 0 {
+		return false, errors.New("empty hash provided")
+	}
+
+	// Convert to string for easier prefix checking
+	hashStr := string(hash)
+	
+	// Detect hash algorithm from prefix
+	switch {
+	case strings.HasPrefix(hashStr, "$2a$"):
+		return compareBcrypt(password, hash)
+	case strings.HasPrefix(hashStr, "$argon2id$"):
+		return compareArgon2id(password, hash)
+	case strings.HasPrefix(hashStr, "$scrypt$"):
+		return compareScrypt(password, hash)
+	case strings.HasPrefix(hashStr, "$pbkdf2-sha256$"):
+		return comparePBKDF2(password, hash)
+	default:
+		return false, fmt.Errorf("unknown hash format: %s", hashStr[:10])
+	}
 }

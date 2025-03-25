@@ -1,4 +1,4 @@
-.PHONY: build clean install uninstall test
+.PHONY: build clean install uninstall test test-auth test-passing test-race test-coverage test-verbose
 
 # Project settings
 BINARY_NAME := applock-go
@@ -33,6 +33,39 @@ release: $(GO_FILES)
 test:
 	@echo "Running tests..."
 	@go test -v ./...
+
+# Run tests only for the auth package
+test-auth:
+	@echo "Running auth package tests..."
+	@go test -v applock-go/internal/auth
+
+# Run only the passing tests
+test-passing:
+	@echo "Running only the passing tests..."
+	@go test -v applock-go/internal/auth -run "TestAuthenticateZKP|TestAuthenticateZKP_MemoryClearing|TestAuthenticateZKP_Timeout|TestAuthenticateZKP_MaxIterations|TestClearMemory|TestBruteForceProtection|TestHashGeneration|TestUnsupportedHashAlgorithm"
+
+# Run tests with race detection
+test-race:
+	@echo "Running tests with race detection..."
+	@go test -v -race ./...
+
+# Run tests with coverage reporting
+test-coverage:
+	@echo "Running tests with coverage..."
+	@mkdir -p test-reports
+	@go test -v -coverprofile=test-reports/coverage.out ./...
+	@go tool cover -html=test-reports/coverage.out -o test-reports/coverage.html
+	@echo "Coverage report generated at test-reports/coverage.html"
+	@go tool cover -func=test-reports/coverage.out
+
+# Run tests with verbose output and coverage
+test-verbose:
+	@echo "Running tests with verbose output and coverage..."
+	@mkdir -p test-reports
+	@go test -v -race -coverprofile=test-reports/coverage.out ./...
+	@go tool cover -html=test-reports/coverage.out -o test-reports/coverage.html
+	@echo "Coverage report generated at test-reports/coverage.html"
+	@go tool cover -func=test-reports/coverage.out
 
 # Clean build artifacts
 clean:

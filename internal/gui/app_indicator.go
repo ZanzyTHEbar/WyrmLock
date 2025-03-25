@@ -4,99 +4,168 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
+	"path/filepath"
 	"sync"
-	"time"
 )
 
-// AppIndicatorImpl is an implementation of the dialog interface using AppIndicator
+// AppIndicatorImpl is a system tray implementation using AppIndicator
 type AppIndicatorImpl struct {
-	mu             sync.Mutex
-	notificationId int
+	mu          sync.Mutex
+	theme       DialogTheme
+	assetsDir   string
+	iconPath    string
+	menuProcess *os.Process
 }
 
 // NewAppIndicatorImpl creates a new AppIndicator implementation
 func NewAppIndicatorImpl() (*AppIndicatorImpl, error) {
-	// Check if notify-send is available (used for notifications)
-	if _, err := exec.LookPath("notify-send"); err != nil {
-		return nil, fmt.Errorf("notify-send command not found; please install libnotify-bin package: %w", err)
+	// Check if yad is installed (for menu display)
+	if _, err := exec.LookPath("yad"); err != nil {
+		return nil, fmt.Errorf("yad command not found; please install yad package: %w", err)
 	}
 
-	// Check if kdialog is available (used for password entry)
-	if _, err := exec.LookPath("kdialog"); err != nil {
-		return nil, fmt.Errorf("kdialog command not found; please install kdialog package: %w", err)
+	// Create assets directory
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	assetsDir := filepath.Join(homeDir, ".applock", "assets")
+	if err := os.MkdirAll(assetsDir, 0700); err != nil {
+		return nil, fmt.Errorf("failed to create assets directory: %w", err)
+	}
+
+	// Create icon
+	iconPath := filepath.Join(assetsDir, "applock.svg")
+	if err := createIcon(iconPath); err != nil {
+		return nil, fmt.Errorf("failed to create icon: %w", err)
 	}
 
 	return &AppIndicatorImpl{
-		notificationId: 1,
+		theme:     LightTheme,
+		assetsDir: assetsDir,
+		iconPath:  iconPath,
 	}, nil
 }
 
-// ShowAuthDialog shows an authentication dialog using AppIndicator
-func (a *AppIndicatorImpl) ShowAuthDialog(appName string) (string, bool, error) {
+// SetTheme sets the dialog theme
+func (a *AppIndicatorImpl) SetTheme(theme DialogTheme) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.theme = theme
+}
+
+// Show displays the system tray icon
+func (a *AppIndicatorImpl) Show() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// First show a notification
-	a.showNotification(appName)
+	// Create menu CSS
+	css := fmt.Sprintf(`
+		window {
+			background-color: %s;
+			color: %s;
+		}
+		menu {
+			background-color: %s;
+			color: %s;
+			border: none;
+			border-radius: 8px;
+			padding: 8px 0;
+			box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+		}
+		menuitem {
+			padding: 8px 16px;
+			margin: 2px 8px;
+			border-radius: 4px;
+		}
+		menuitem:hover {
+			background-color: %s;
+			color: %s;
+		}
+		menuitem:active {
+			background-color: %sdd;
+		}
+		separator {
+			background-color: %s;
+			margin: 4px 8px;
+		}
+	`, a.theme.Background, a.theme.OnBackground,
+		a.theme.Surface, a.theme.OnSurface,
+		a.theme.Primary, a.theme.OnPrimary,
+		a.theme.Primary, a.theme.Secondary)
 
-	// Then show a password dialog
-	title := fmt.Sprintf("Authentication Required - %s", appName)
-	cmd := exec.Command("kdialog",
-		"--password",
-		fmt.Sprintf("Enter password to unlock %s:", appName),
-		"--title", title,
-	)
-
-	// Capture the output (password)
-	output, err := cmd.Output()
-
-	// Check if the user clicked Cancel
-	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-		return "", false, nil // User cancelled, not an error condition
-	} else if err != nil {
-		return "", false, fmt.Errorf("error showing authentication dialog: %w", err)
+	// Create CSS file
+	cssPath := filepath.Join(a.assetsDir, "menu.css")
+	if err := os.WriteFile(cssPath, []byte(css), 0600); err != nil {
+		return fmt.Errorf("failed to write CSS file: %w", err)
 	}
 
-	// Trim newlines and return
-	password := strings.TrimSpace(string(output))
-	return password, true, nil
+	// Create menu script
+	menuScript := fmt.Sprintf(`#!/bin/sh
+yad --notification \
+	--image="%s" \
+	--command="yad --menu \
+		--title='AppLock Menu' \
+		--width=200 \
+		--height=300 \
+		--no-buttons \
+		--text='AppLock Menu' \
+		--column='' \
+		'Show Protected Apps' \
+		'Add Application' \
+		'Settings' \
+		'About' \
+		'Quit' \
+		--gtk-style='%s'" \
+	--menu="Show Protected Apps|Add Application|Settings|About|Quit"
+`, a.iconPath, cssPath)
+
+	// Save menu script
+	scriptPath := filepath.Join(a.assetsDir, "menu.sh")
+	if err := os.WriteFile(scriptPath, []byte(menuScript), 0700); err != nil {
+		return fmt.Errorf("failed to write menu script: %w", err)
+	}
+
+	// Start menu process
+	cmd := exec.Command(scriptPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start menu process: %w", err)
+	}
+
+	a.menuProcess = cmd.Process
+	return nil
 }
 
-// showNotification shows a system notification
-func (a *AppIndicatorImpl) showNotification(appName string) {
-	// Create notification ID to replace previous notifications
-	notificationId := fmt.Sprintf("applock-go-%d", a.notificationId)
-	a.notificationId++
+// Hide removes the system tray icon
+func (a *AppIndicatorImpl) Hide() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
-	// Try to find an appropriate lock icon
-	iconPath := ""
-	for _, path := range []string{
-		"/usr/share/icons/gnome/48x48/status/locked.png",
-		"/usr/share/icons/Adwaita/48x48/status/locked.png",
-		"/usr/share/icons/oxygen/base/48x48/status/object-locked.png",
-	} {
-		if _, err := os.Stat(path); err == nil {
-			iconPath = path
-			break
+	if a.menuProcess != nil {
+		if err := a.menuProcess.Kill(); err != nil {
+			return fmt.Errorf("failed to kill menu process: %w", err)
 		}
+		a.menuProcess = nil
 	}
 
-	// If no icon was found, use a generic one
-	if iconPath == "" {
-		iconPath = "dialog-password"
-	}
+	return nil
+}
 
-	// Show notification
-	exec.Command("notify-send",
-		"--app-name=Applock-go",
-		"--icon="+iconPath,
-		"--replace-id="+notificationId,
-		"--urgency=critical",
-		fmt.Sprintf("Authentication Required for %s", appName),
-		"Enter your password to continue",
-	).Run()
+// createIcon creates the AppLock icon SVG file
+func createIcon(path string) error {
+	// Modern lock icon in SVG format
+	iconSVG := `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="256" height="256" version="1.1" viewBox="0 0 67.733 67.733" xmlns="http://www.w3.org/2000/svg">
+ <g transform="translate(0 -229.27)">
+  <g transform="matrix(.26458 0 0 .26458 0 229.27)">
+   <path d="m128 0c-35.346 0-64 28.654-64 64v32h-24c-13.254 0-24 10.746-24 24v128c0 13.254 10.746 24 24 24h176c13.254 0 24-10.746 24-24v-128c0-13.254-10.746-24-24-24h-24v-32c0-35.346-28.654-64-64-64zm0 32c17.673 0 32 14.327 32 32v32h-64v-32c0-17.673 14.327-32 32-32zm0 112c13.254 0 24 10.746 24 24s-10.746 24-24 24-24-10.746-24-24 10.746-24 24-24z" fill="#1976d2"/>
+  </g>
+ </g>
+</svg>`
 
-	// Sleep briefly to ensure notification is displayed before dialog
-	time.Sleep(500 * time.Millisecond)
+	return os.WriteFile(path, []byte(iconSVG), 0600)
 }
