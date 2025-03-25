@@ -25,6 +25,8 @@ type Daemon struct {
 	stopCh          chan struct{}
 	shutdownHandler *util.ShutdownHandler
 	privManager     *privilege.PrivilegeManager
+	helperClient    *privilege.HelperClient
+	opHandler       *privilege.OperationHandler
 }
 
 // NewDaemon creates a new privileged daemon
@@ -37,6 +39,15 @@ func NewDaemon(cfg *config.Config) (*Daemon, error) {
 		return nil, fmt.Errorf("failed to create privilege manager: %w", err)
 	}
 
+	// Create helper client for privileged operations
+	helperClient := privilege.NewHelperClient(logger)
+	
+	// Create operation handler
+	opHandler := privilege.NewOperationHandler(logger, privManager)
+	if err := opHandler.InitializeHelper(); err != nil {
+		return nil, fmt.Errorf("failed to initialize operation handler: %w", err)
+	}
+
 	// Create process monitor without authenticator - authentication
 	// will be handled by the unprivileged client
 	monitor, err := monitor.NewProcessMonitorDaemon(cfg, logger)
@@ -45,12 +56,14 @@ func NewDaemon(cfg *config.Config) (*Daemon, error) {
 	}
 
 	daemon := &Daemon{
-		config:      cfg,
-		monitor:     monitor,
-		logger:      logger,
-		connections: make(map[net.Conn]struct{}),
-		stopCh:      make(chan struct{}),
-		privManager: privManager,
+		config:       cfg,
+		monitor:      monitor,
+		logger:       logger,
+		connections:  make(map[net.Conn]struct{}),
+		stopCh:       make(chan struct{}),
+		privManager:  privManager,
+		helperClient: helperClient,
+		opHandler:    opHandler,
 	}
 
 	// Create shutdown handler
@@ -69,29 +82,77 @@ func NewDaemon(cfg *config.Config) (*Daemon, error) {
 
 // Start begins the daemon and listens for client connections
 func (d *Daemon) Start() error {
-	// Setup socket for IPC
-	socketPath := "/var/run/applock-daemon.sock"
-
-	// Remove existing socket if it exists
-	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove existing socket: %w", err)
+	// Check if socket creation requires privileges
+	requiresPrivilege, _ := d.privManager.IsOperationPrivileged(string(privilege.OpSocketCreation))
+	
+	var socketPath string
+	
+	if requiresPrivilege {
+		// Use helper for socket creation
+		d.logger.Info("Using privileged helper for socket creation")
+		resp, err := d.helperClient.ExecutePrivilegedOperation(privilege.OpSocketCreation, map[string]string{
+			"path": "/var/run/applock-daemon.sock",
+			"perm": "0666",
+		})
+		
+		if err != nil {
+			return fmt.Errorf("failed to create socket using helper: %w", err)
+		}
+		
+		if !resp.Success {
+			return fmt.Errorf("helper failed to create socket: %s", resp.Error)
+		}
+		
+		socketPath = resp.Results["socket_path"]
+		
+		// Create socket using the path returned by helper
+		listener, err := net.Listen("unix", socketPath)
+		if err != nil {
+			return fmt.Errorf("failed to create socket at %s: %w", socketPath, err)
+		}
+		d.socket = listener
+	} else {
+		// Create socket directly
+		socketPath = "/var/run/applock-daemon.sock"
+		
+		// Remove existing socket if it exists
+		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove existing socket: %w", err)
+		}
+		
+		// Create socket
+		listener, err := net.Listen("unix", socketPath)
+		if err != nil {
+			return fmt.Errorf("failed to create socket: %w", err)
+		}
+		d.socket = listener
+		
+		// Set permissions so non-root can connect
+		if err := os.Chmod(socketPath, 0666); err != nil {
+			return fmt.Errorf("failed to set socket permissions: %w", err)
+		}
 	}
-
-	// Create socket
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return fmt.Errorf("failed to create socket: %w", err)
-	}
-	d.socket = listener
-
-	// Set permissions so non-root can connect
-	if err := os.Chmod(socketPath, 0666); err != nil {
-		return fmt.Errorf("failed to set socket permissions: %w", err)
-	}
-
+	
+	// Store socket path in config for later use
+	d.config.SocketPath = socketPath
+	d.logger.Debugf("Daemon socket created at %s", socketPath)
+	
 	// Start process monitor
-	if err := d.monitor.Start(); err != nil {
-		return fmt.Errorf("failed to start monitor: %w", err)
+	monitorResp, err := d.opHandler.ExecuteOperation(privilege.OperationRequest{
+		Type: privilege.OpMonitoring,
+		Arguments: map[string]string{
+			"action": "start",
+		},
+	})
+	
+	if err != nil || !monitorResp.Success {
+		errMsg := "unknown error"
+		if err != nil {
+			errMsg = err.Error()
+		} else if monitorResp != nil {
+			errMsg = monitorResp.Error
+		}
+		return fmt.Errorf("failed to start monitor: %s", errMsg)
 	}
 
 	// Drop privileges while maintaining required capabilities
@@ -220,8 +281,15 @@ func (d *Daemon) broadcastMessage(msg ipc.Message) {
 func (d *Daemon) Stop() error {
 	close(d.stopCh)
 
-	// Restore privileges for cleanup
-	if err := d.privManager.RestorePrivileges(); err != nil {
+	// Restore privileges for cleanup operations that require it
+	restoreResp, err := d.opHandler.ExecuteOperation(privilege.OperationRequest{
+		Type: privilege.OpSocketCreation,
+		Arguments: map[string]string{
+			"action": "restore_privileges",
+		},
+	})
+	
+	if err != nil || !restoreResp.Success {
 		d.logger.Errorf("Error restoring privileges: %v", err)
 	}
 
@@ -242,6 +310,20 @@ func (d *Daemon) Stop() error {
 	if d.socket != nil {
 		if err := d.socket.Close(); err != nil {
 			d.logger.Errorf("Error closing socket: %v", err)
+		}
+	}
+	
+	// Disconnect from helper if connected
+	if d.helperClient != nil {
+		if err := d.helperClient.Disconnect(); err != nil {
+			d.logger.Errorf("Error disconnecting from helper: %v", err)
+		}
+	}
+	
+	// Stop the operation handler's helper process if it was started
+	if d.opHandler != nil {
+		if err := d.opHandler.StopHelperProcess(); err != nil {
+			d.logger.Errorf("Error stopping helper process: %v", err)
 		}
 	}
 

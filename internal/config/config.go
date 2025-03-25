@@ -64,6 +64,12 @@ type MonitorConfig struct {
 
 	// ProtectedApps is a list of applications that require authentication
 	ProtectedApps []string `json:"protected_apps"`
+
+	// VerifyHashes enables verification of executable hashes
+	VerifyHashes bool `json:"verify_hashes"`
+
+	// HashAlgorithm specifies which hash algorithm to use for verification
+	HashAlgorithm string `json:"hash_algorithm"`
 }
 
 // BlockedApp represents an application that requires authentication
@@ -150,6 +156,12 @@ func setConfigDefaults(v *viper.Viper) {
 
 	// Default scan interval (1 second)
 	v.SetDefault("monitor.scan_interval", 1)
+	
+	// Default to not verifying hashes initially for compatibility
+	v.SetDefault("monitor.verify_hashes", false)
+	
+	// Default hash algorithm for verification
+	v.SetDefault("monitor.hash_algorithm", "sha256")
 
 	// Default socket path
 	v.SetDefault("socket_path", "/var/run/applock-daemon.sock")
@@ -192,6 +204,16 @@ func validateConfig(cfg *Config) error {
 			return fmt.Errorf("invalid hash algorithm: %s", cfg.Auth.HashAlgorithm)
 		}
 	}
+	
+	// Check hash algorithm for process verification
+	if cfg.Monitor.VerifyHashes {
+		switch cfg.Monitor.HashAlgorithm {
+		case "sha256", "sha512":
+			// Valid hash algorithms
+		default:
+			return fmt.Errorf("invalid process verification hash algorithm: %s", cfg.Monitor.HashAlgorithm)
+		}
+	}
 
 	return nil
 }
@@ -207,6 +229,9 @@ func CreateDefaultConfig(path string) error {
 		"/usr/bin/firefox",
 		"/usr/bin/chromium",
 	})
+	v.Set("monitor.scan_interval", 1)
+	v.Set("monitor.verify_hashes", false)
+	v.Set("monitor.hash_algorithm", "sha256")
 
 	// Auth settings
 	v.Set("auth.use_zero_knowledge_proof", true)
@@ -250,6 +275,8 @@ func SaveConfig(cfg *Config, configPath string) error {
 	// Set config values from our Config struct
 	v.Set("monitor.protected_apps", cfg.Monitor.ProtectedApps)
 	v.Set("monitor.scan_interval", cfg.Monitor.ScanInterval)
+	v.Set("monitor.verify_hashes", cfg.Monitor.VerifyHashes)
+	v.Set("monitor.hash_algorithm", cfg.Monitor.HashAlgorithm)
 
 	// Auth settings
 	v.Set("auth.use_zero_knowledge_proof", cfg.Auth.UseZeroKnowledgeProof)
@@ -302,6 +329,8 @@ func DefaultConfig() *Config {
 		Monitor: MonitorConfig{
 			ScanInterval:  1,
 			ProtectedApps: []string{},
+			VerifyHashes:  false,
+			HashAlgorithm: "sha256",
 		},
 	}
 

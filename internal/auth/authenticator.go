@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -27,6 +29,9 @@ var (
 	ErrComparatorSecretFailed = errors.New("failed to set comparator secret")
 	ErrProtocolAborted        = errors.New("ZKP protocol aborted")
 	ErrProtocolExceeded       = errors.New("ZKP protocol exceeded maximum iterations")
+	ErrEmptyInput             = errors.New("empty authentication input")
+	ErrMemoryCompromised      = errors.New("memory integrity check failed")
+	ErrInvalidComparatorState = errors.New("invalid secure comparator state")
 )
 
 // Default values for brute force protection
@@ -37,9 +42,30 @@ const (
 
 // ZKP protocol constants
 const (
-	ZKPProtocolTimeout  = 30 * time.Second
-	ZKPMaxIterations    = 10
-	ZKPMemoryCleanDelay = 100 * time.Millisecond
+	ZKPProtocolTimeout       = 30 * time.Second
+	ZKPMaxIterations         = 10
+	ZKPMemoryCleanDelay      = 100 * time.Millisecond
+	ZKPMemoryCleanIterations = 3 // Multiple overwrite iterations
+)
+
+// ZKP result constants from Themis secure comparator
+const (
+	ZKPResultNotReady = iota
+	ZKPResultNoMatch
+	ZKPResultMatch
+	ZKPResultInProgress // Match Themis's internal state
+)
+
+// ZKP phase constants
+const (
+	ZKPPhaseInitial        = "initial"
+	ZKPPhaseClientBegin    = "client_begin"
+	ZKPPhaseServerProceed  = "server_proceed"
+	ZKPPhaseClientProceed  = "client_proceed"
+	ZKPPhaseCompleted      = "completed"
+	ZKPPhaseFailed         = "failed"
+	ZKPPhaseTimeout        = "timeout"
+	ZKPPhaseInvalid        = "invalid"
 )
 
 // Authenticator provides methods for authenticating users
@@ -60,11 +86,15 @@ type Authenticator struct {
 
 // protocolState tracks the state of the ZKP protocol
 type protocolState struct {
-	iteration    int
-	lastPhase    string
-	messages     [][]byte
-	serverResult int
-	clientResult int
+	iteration    int                 // Current iteration
+	lastPhase    string              // Last completed phase
+	messages     [][]byte            // Message history
+	serverResult int                 // Server comparison result
+	clientResult int                 // Client comparison result
+	startTime    time.Time           // When the protocol started
+	lastActive   time.Time           // When the protocol was last active
+	contextID    string              // Unique ID for this protocol run
+	metadata     map[string]string   // Additional metadata for debugging
 }
 
 // NewAuthenticator creates a new authenticator with the given configuration
@@ -133,70 +163,136 @@ func (a *Authenticator) AuthenticateZKP(userInput []byte) (bool, error) {
 	// Enhanced error handling with more descriptive errors
 	// Ensure input is not empty
 	if len(userInput) == 0 {
-		return false, fmt.Errorf("empty authentication input")
+		return false, ErrEmptyInput
 	}
 
 	// Create a context with timeout for the authentication process
 	ctx, cancel := context.WithTimeout(context.Background(), ZKPProtocolTimeout)
 	defer cancel()
 
-	// Get the stored secret
+	// Create new protocol state for tracking
+	state := &protocolState{
+		iteration:  0,
+		lastPhase:  ZKPPhaseInitial,
+		messages:   make([][]byte, 0, ZKPMaxIterations*2), // Pre-allocate enough capacity
+		startTime:  time.Now(),
+		lastActive: time.Now(),
+		contextID:  generateProtocolID(),
+		metadata:   make(map[string]string),
+	}
+
+	// Add basic tracking info
+	state.metadata["client_ip"] = "local" // In a networked context, this would be the client IP
+	state.metadata["auth_type"] = "zkp_secure_comparator"
+	state.metadata["user_agent"] = "applock-go" // Could be more specific in a real context
+
+	// Log protocol initiation with context ID for tracing
+	a.logger.Debugf("Starting ZKP protocol with context ID: %s", state.contextID)
+
+	// Get the stored secret with secure handling
 	secret, err := a.getSecret()
 	if err != nil {
 		return false, fmt.Errorf("failed to get secret: %w", err)
 	}
-	// Ensure we clear the secret from memory when done
+	
+	// Ensure we clear the secret from memory when done with multiple overwrite passes
 	defer func() {
-		ClearMemory(secret)
+		// Multiple cleaning passes for secure memory wiping
+		for i := 0; i < ZKPMemoryCleanIterations; i++ {
+			ClearMemory(secret)
+		}
+		// Add a memory barrier to prevent compiler optimizations that might keep data in registers
+		runtime.KeepAlive(secret)
 		// Small delay to ensure memory is cleared before function returns
-		// This helps prevent optimization that might keep the secret in memory
 		time.Sleep(ZKPMemoryCleanDelay)
 	}()
 
-	// Create new protocol state for tracking
-	state := &protocolState{
-		iteration: 0,
-		lastPhase: "",
-		messages:  make([][]byte, 0, ZKPMaxIterations*2), // Pre-allocate enough capacity
+	// Verify secret is valid
+	if len(secret) == 0 {
+		return false, fmt.Errorf("%w: stored secret is empty", ErrSecretNotFound)
 	}
 
-	// Create secure comparators with proper cleanup
+	// Create secure comparators with proper error handling
+	serverComparator, clientComparator, err := a.createComparators(secret, userInput)
+	if err != nil {
+		return false, err
+	}
+
+	// Start the protocol
+	success, err := a.runZKPProtocol(ctx, state, serverComparator, clientComparator)
+	
+	// Complete metadata for audit logging
+	state.metadata["duration"] = fmt.Sprintf("%v", time.Since(state.startTime))
+	state.metadata["iterations"] = fmt.Sprintf("%d", state.iteration)
+	state.metadata["result"] = fmt.Sprintf("%v", success)
+	if err != nil {
+		state.metadata["error"] = err.Error()
+	}
+	
+	// Log completion info
+	if success {
+		a.logger.Infof("ZKP protocol %s succeeded after %d iterations in %v", 
+			state.contextID, state.iteration, time.Since(state.startTime))
+	} else {
+		a.logger.Infof("ZKP protocol %s failed after %d iterations in %v: %v", 
+			state.contextID, state.iteration, time.Since(state.startTime), err)
+	}
+	
+	return success, err
+}
+
+// createComparators creates and initializes the secure comparators for ZKP
+func (a *Authenticator) createComparators(secret, userInput []byte) (*compare.SecureCompare, *compare.SecureCompare, error) {
+	// Create the server comparator
 	serverComparator, err := compare.New()
 	if err != nil {
 		a.logger.Errorf("failed to create server comparator: %v", err)
-		return false, fmt.Errorf("%w: %v", ErrComparatorInitFailed, err)
+		return nil, nil, fmt.Errorf("%w: %v", ErrComparatorInitFailed, err)
 	}
 	
+	// Create the client comparator
 	clientComparator, err := compare.New()
 	if err != nil {
 		a.logger.Errorf("failed to create client comparator: %v", err)
-		return false, fmt.Errorf("%w: %v", ErrComparatorInitFailed, err)
+		return nil, nil, fmt.Errorf("%w: %v", ErrComparatorInitFailed, err)
 	}
 
-	// Set the secrets for both sides
+	// Set the secrets for both sides with error handling
 	if err := serverComparator.Append(secret); err != nil {
 		a.logger.Errorf("failed to set server secret: %v", err)
-		return false, fmt.Errorf("%w: %v", ErrComparatorSecretFailed, err)
+		return nil, nil, fmt.Errorf("%w: %v", ErrComparatorSecretFailed, err)
 	}
 	
 	if err := clientComparator.Append(userInput); err != nil {
 		a.logger.Errorf("failed to set client secret: %v", err)
-		return false, fmt.Errorf("%w: %v", ErrComparatorSecretFailed, err)
+		return nil, nil, fmt.Errorf("%w: %v", ErrComparatorSecretFailed, err)
 	}
+	
+	return serverComparator, clientComparator, nil
+}
 
-	// Initial message from client
+// runZKPProtocol executes the ZKP protocol state machine
+func (a *Authenticator) runZKPProtocol(
+	ctx context.Context,
+	state *protocolState,
+	serverComparator *compare.SecureCompare,
+	clientComparator *compare.SecureCompare,
+) (bool, error) {
+	// Initial message from client to start the protocol
 	clientData, err := clientComparator.Begin()
 	if err != nil {
 		a.logger.Errorf("failed to begin comparison: %v", err)
+		state.lastPhase = ZKPPhaseFailed
 		return false, fmt.Errorf("failed to begin comparison: %w", err)
 	}
 	
 	// Track the first message
-	state.lastPhase = "client_begin"
+	state.lastPhase = ZKPPhaseClientBegin
 	state.messages = append(state.messages, clientData)
+	state.lastActive = time.Now()
 	
-	a.logger.Debugf("ZKP protocol started, iteration %d, phase %s", 
-		state.iteration, state.lastPhase)
+	a.logger.Debugf("ZKP protocol started (ctx: %s), iteration %d, phase %s", 
+		state.contextID, state.iteration, state.lastPhase)
 
 	// Continue the protocol until it's completed
 	inProgress := true
@@ -206,31 +302,37 @@ func (a *Authenticator) AuthenticateZKP(userInput []byte) (bool, error) {
 		select {
 		case <-ctx.Done():
 			// Log protocol state on timeout
-			a.logger.Warnf("ZKP protocol timed out at iteration %d, phase %s",
-				state.iteration, state.lastPhase)
+			a.logger.Warnf("ZKP protocol %s timed out at iteration %d, phase %s",
+				state.contextID, state.iteration, state.lastPhase)
+			state.lastPhase = ZKPPhaseTimeout
 			return false, fmt.Errorf("%w: protocol timed out at phase %s after %d iterations",
 				ErrTimeout, state.lastPhase, state.iteration)
 		default:
-			// Server phase
-			if state.lastPhase == "client_begin" || state.lastPhase == "client_proceed" {
+			// Server phase - process the client's message
+			if state.lastPhase == ZKPPhaseClientBegin || state.lastPhase == ZKPPhaseClientProceed {
+				// Process the client's message on the server side
 				serverData, err = serverComparator.Proceed(clientData)
 				if err != nil {
 					a.logger.Errorf("Server comparison failed at iteration %d: %v",
 						state.iteration, err)
+					state.lastPhase = ZKPPhaseFailed
 					return false, fmt.Errorf("server comparison failed at iteration %d: %w",
 						state.iteration, err)
 				}
 				
 				// Track message and update state
-				state.lastPhase = "server_proceed"
+				state.lastPhase = ZKPPhaseServerProceed
 				state.messages = append(state.messages, serverData)
+				state.lastActive = time.Now()
 				
-				a.logger.Debugf("ZKP server proceed, iteration %d", state.iteration)
+				a.logger.Debugf("ZKP server proceed (ctx: %s), iteration %d", 
+					state.contextID, state.iteration)
 
 				// Check server result
 				serverResult, err := serverComparator.Result()
 				if err != nil {
 					a.logger.Errorf("Failed to get server result: %v", err)
+					state.lastPhase = ZKPPhaseFailed
 					return false, fmt.Errorf("failed to get server result at iteration %d: %w",
 						state.iteration, err)
 				}
@@ -238,36 +340,43 @@ func (a *Authenticator) AuthenticateZKP(userInput []byte) (bool, error) {
 				// Save result in state
 				state.serverResult = serverResult
 
-				switch serverResult {
-				case compare.Match:
-					a.logger.Debug("ZKP authentication succeeded (server)")
+				// Handle completed protocol from server side
+				if serverResult == compare.Match {
+					a.logger.Debugf("ZKP authentication succeeded (server) (ctx: %s)", state.contextID)
+					state.lastPhase = ZKPPhaseCompleted
 					return true, nil
-				case compare.NoMatch:
-					a.logger.Debug("ZKP authentication failed: no match (server)")
+				} else if serverResult == compare.NoMatch {
+					a.logger.Debugf("ZKP authentication failed: no match (server) (ctx: %s)", state.contextID)
+					state.lastPhase = ZKPPhaseCompleted
 					return false, ErrAuthFailed
 				}
 			}
 
-			// Client phase
-			if state.lastPhase == "server_proceed" {
+			// Client phase - process the server's response
+			if state.lastPhase == ZKPPhaseServerProceed {
+				// Process the server's message on the client side
 				clientData, err = clientComparator.Proceed(serverData)
 				if err != nil {
 					a.logger.Errorf("Client comparison failed at iteration %d: %v",
 						state.iteration, err)
+					state.lastPhase = ZKPPhaseFailed
 					return false, fmt.Errorf("client comparison failed at iteration %d: %w",
 						state.iteration, err)
 				}
 				
 				// Track message and update state
-				state.lastPhase = "client_proceed"
+				state.lastPhase = ZKPPhaseClientProceed
 				state.messages = append(state.messages, clientData)
+				state.lastActive = time.Now()
 				
-				a.logger.Debugf("ZKP client proceed, iteration %d", state.iteration)
+				a.logger.Debugf("ZKP client proceed (ctx: %s), iteration %d",
+					state.contextID, state.iteration)
 
 				// Check client result
 				clientResult, err := clientComparator.Result()
 				if err != nil {
 					a.logger.Errorf("Failed to get client result: %v", err)
+					state.lastPhase = ZKPPhaseFailed
 					return false, fmt.Errorf("failed to get client result at iteration %d: %w",
 						state.iteration, err)
 				}
@@ -275,34 +384,41 @@ func (a *Authenticator) AuthenticateZKP(userInput []byte) (bool, error) {
 				// Save result in state
 				state.clientResult = clientResult
 
-				switch clientResult {
-				case compare.Match:
-					a.logger.Debug("ZKP authentication succeeded (client)")
+				// Handle completed protocol from client side
+				if clientResult == compare.Match {
+					a.logger.Debugf("ZKP authentication succeeded (client) (ctx: %s)", state.contextID)
+					state.lastPhase = ZKPPhaseCompleted
 					return true, nil
-				case compare.NoMatch:
-					a.logger.Debug("ZKP authentication failed: no match (client)")
+				} else if clientResult == compare.NoMatch {
+					a.logger.Debugf("ZKP authentication failed: no match (client) (ctx: %s)", state.contextID)
+					state.lastPhase = ZKPPhaseCompleted
 					return false, ErrAuthFailed
 				}
 			}
 
 			// Update state for next iteration
 			state.iteration++
-			inProgress = (state.lastPhase == "client_proceed")
+			inProgress = (state.lastPhase == ZKPPhaseClientProceed)
 			
 			// Verify protocol state is valid after each iteration
 			if err := a.verifyProtocolState(state); err != nil {
 				a.logger.Errorf("Protocol state verification failed: %v", err)
+				state.lastPhase = ZKPPhaseInvalid
 				return false, fmt.Errorf("%w: %v", ErrInvalidProtocolState, err)
 			}
 		}
 	}
 
+	// Check if we exceeded max iterations
 	if state.iteration >= ZKPMaxIterations {
-		a.logger.Warnf("ZKP protocol exceeded maximum iterations")
+		a.logger.Warnf("ZKP protocol %s exceeded maximum iterations", state.contextID)
+		state.lastPhase = ZKPPhaseFailed
 		return false, ErrProtocolExceeded
 	}
 
-	// We shouldn't reach here, but just in case
+	// This should be unreachable, but just in case
+	a.logger.Warnf("ZKP protocol %s aborted unexpectedly", state.contextID)
+	state.lastPhase = ZKPPhaseFailed
 	return false, ErrProtocolAborted
 }
 
@@ -328,7 +444,7 @@ func (a *Authenticator) verifyProtocolState(state *protocolState) error {
 	// Verify the number of messages is consistent with the iteration count
 	// Each iteration should have 2 messages (client and server)
 	expectedMessages := state.iteration * 2
-	if state.lastPhase == "client_begin" || state.lastPhase == "server_proceed" {
+	if state.lastPhase == ZKPPhaseClientBegin || state.lastPhase == ZKPPhaseServerProceed {
 		expectedMessages++
 	}
 	
@@ -339,37 +455,57 @@ func (a *Authenticator) verifyProtocolState(state *protocolState) error {
 
 	// Verify phase transition is valid
 	validTransitions := map[string][]string{
-		"":               {"client_begin"},
-		"client_begin":   {"server_proceed"},
-		"server_proceed": {"client_proceed"},
-		"client_proceed": {"server_proceed"},
+		ZKPPhaseInitial:       {ZKPPhaseClientBegin},
+		ZKPPhaseClientBegin:   {ZKPPhaseServerProceed},
+		ZKPPhaseServerProceed: {ZKPPhaseClientProceed, ZKPPhaseCompleted},
+		ZKPPhaseClientProceed: {ZKPPhaseServerProceed, ZKPPhaseCompleted},
+		ZKPPhaseCompleted:     {},
+		ZKPPhaseFailed:        {},
+		ZKPPhaseTimeout:       {},
+		ZKPPhaseInvalid:       {},
 	}
 
 	// Check if the current phase is valid
 	if valid, ok := validTransitions[state.lastPhase]; !ok {
 		return fmt.Errorf("invalid protocol phase: %s", state.lastPhase)
 	} else if ok && len(valid) > 0 {
-		// If there's a next phase, verify it's a valid transition
-		// This is primarily for debugging purposes and doesn't get checked
-		// until the next iteration
-		if state.iteration > 0 && state.lastPhase == "server_proceed" {
-			// Ensure only client_proceed can follow server_proceed
-			for _, v := range valid {
-				if v != "client_proceed" {
-					return fmt.Errorf("invalid phase transition rule from %s", state.lastPhase)
-				}
+		// Verification here is just to ensure the protocol state is valid
+		// during the protocol execution, not to predict the next state
+		if state.lastPhase == ZKPPhaseServerProceed && 
+		   state.serverResult != ZKPResultNotReady && 
+		   state.serverResult != ZKPResultInProgress {
+			// Check if the server has a definitive result
+			if state.serverResult != compare.Match && state.serverResult != compare.NoMatch {
+				return fmt.Errorf("invalid server result: %d", state.serverResult)
 			}
-		} else if state.iteration > 0 && state.lastPhase == "client_proceed" {
-			// Ensure only server_proceed can follow client_proceed
-			for _, v := range valid {
-				if v != "server_proceed" {
-					return fmt.Errorf("invalid phase transition rule from %s", state.lastPhase)
-				}
+		} else if state.lastPhase == ZKPPhaseClientProceed &&
+				 state.clientResult != ZKPResultNotReady && 
+				 state.clientResult != ZKPResultInProgress {
+			// Check if the client has a definitive result
+			if state.clientResult != compare.Match && state.clientResult != compare.NoMatch {
+				return fmt.Errorf("invalid client result: %d", state.clientResult)
 			}
 		}
 	}
 
+	// Check for timeout - this is a sanity check in addition to the context timeout
+	if time.Since(state.lastActive) > ZKPProtocolTimeout {
+		return fmt.Errorf("protocol inactive for too long: %v", time.Since(state.lastActive))
+	}
+
 	return nil
+}
+
+// generateProtocolID creates a unique identifier for a protocol session
+func generateProtocolID() string {
+	// Generate a random ID for protocol tracing
+	b := make([]byte, 8)
+	_, err := rand.Read(b)
+	if err != nil {
+		// Fallback to timestamp if random generation fails
+		return fmt.Sprintf("zkp-%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("zkp-%x", b)
 }
 
 // Authenticate verifies if the provided user input matches the stored secret
@@ -522,9 +658,25 @@ func (a *Authenticator) ResetAttempts(appPath string) {
 // This function ensures that sensitive data like secrets and passwords
 // are properly removed from memory to prevent leaks in case of memory dumps.
 func ClearMemory(data []byte) {
+	// Use memory barrier to prevent optimization
+	runtime.KeepAlive(data)
+	
+	// Fill with random data first
+	_, err := rand.Read(data)
+	if err != nil {
+		// If random fill fails, use alternating bit patterns
+		for i := range data {
+			data[i] = byte(i & 0xFF)
+		}
+	}
+	
+	// Then zero it out
 	for i := range data {
 		data[i] = 0
 	}
+	
+	// Use memory barrier again
+	runtime.KeepAlive(data)
 }
 
 // GetSecretPath returns the path to the secret file used by the authenticator

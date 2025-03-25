@@ -39,6 +39,7 @@ the user provides the correct authentication.`,
 
 	// Add subcommands
 	rootCmd.AddCommand(
+		newAppCommand(),
 		newRunCommand(),
 		newSetSecretCommand(),
 		newCreateConfigCommand(),

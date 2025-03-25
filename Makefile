@@ -2,6 +2,7 @@
 
 # Project settings
 BINARY_NAME := applock-go
+HELPER_NAME := applock-helper
 INSTALL_DIR := /usr/local/bin
 CONFIG_DIR := /etc/applock-go
 SYSTEMD_DIR := /etc/systemd/system
@@ -10,6 +11,7 @@ GO_FILES := $(shell find . -name '*.go')
 
 # Directories
 CMD_DIR := ./cmd/applock
+HELPER_DIR := ./cmd/applock-helper
 
 # Build settings
 LDFLAGS := -ldflags="-s -w"
@@ -21,12 +23,16 @@ all: build
 build: $(GO_FILES)
 	@echo "Building $(BINARY_NAME)..."
 	@go build $(BUILD_FLAGS) $(LDFLAGS) -o $(BINARY_NAME) $(CMD_DIR)
+	@echo "Building $(HELPER_NAME)..."
+	@go build $(BUILD_FLAGS) $(LDFLAGS) -o $(HELPER_NAME) $(HELPER_DIR)
 	@echo "Build complete!"
 
 # Create a release build
 release: $(GO_FILES)
 	@echo "Creating release build..."
 	@go build $(BUILD_FLAGS) $(LDFLAGS) -o $(BINARY_NAME) $(CMD_DIR)
+	@echo "Building $(HELPER_NAME) release..."
+	@go build $(BUILD_FLAGS) $(LDFLAGS) -o $(HELPER_NAME) $(HELPER_DIR)
 	@echo "Release build complete!"
 
 # Run tests
@@ -71,6 +77,7 @@ test-verbose:
 clean:
 	@echo "Cleaning..."
 	@rm -f $(BINARY_NAME)
+	@rm -f $(HELPER_NAME)
 	@go clean
 	@echo "Clean complete!"
 
@@ -79,6 +86,7 @@ install-bin: build
 	@echo "Installing $(BINARY_NAME)..."
 	@sudo install -d $(DESTDIR)$(INSTALL_DIR)
 	@sudo install -m 755 $(BINARY_NAME) $(DESTDIR)$(INSTALL_DIR)/$(BINARY_NAME)
+	@sudo install -m 4755 $(HELPER_NAME) $(DESTDIR)$(INSTALL_DIR)/$(HELPER_NAME)
 	@sudo install -d $(DESTDIR)$(CONFIG_DIR)
 	@if [ ! -f $(DESTDIR)$(CONFIG_DIR)/config.toml ]; then \
 		echo "Creating default configuration..."; \
@@ -93,6 +101,7 @@ install-bin: build
 uninstall:
 	@echo "Uninstalling $(BINARY_NAME)..."
 	@sudo rm -f $(DESTDIR)$(INSTALL_DIR)/$(BINARY_NAME)
+	@sudo rm -f $(DESTDIR)$(INSTALL_DIR)/$(HELPER_NAME)
 	@sudo rm -f $(DESTDIR)$(CONFIG_DIR)/config.toml
 	@echo "Note: Configuration directory $(CONFIG_DIR) was removed"
 	@sudo systemctl disable --now $(BINARY_NAME).service && sudo rm $(SERVICE_FILE)

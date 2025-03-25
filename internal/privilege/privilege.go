@@ -318,3 +318,86 @@ func (p *PrivilegeManager) ClearCapabilities() error {
 	p.logger.Debug("All capabilities cleared")
 	return nil
 }
+
+// PrivilegeOperations defines operations that require different privilege levels
+type PrivilegeOperations struct {
+	// RootRequired specifies operations that absolutely require root privileges
+	RootRequired []string
+	
+	// CapabilitiesRequired specifies operations that require specific capabilities
+	// but not full root privileges 
+	CapabilitiesRequired map[string][]Capability
+	
+	// UnprivilegedAllowed specifies operations that can run without any privileges
+	UnprivilegedAllowed []string
+}
+
+// GetRequiredPrivileges returns a mapping of operations to required privilege levels
+func GetRequiredPrivileges() PrivilegeOperations {
+	return PrivilegeOperations{
+		RootRequired: []string{
+			"initial_setup",            // Initial daemon setup
+			"socket_creation",          // Creating the socket in restricted directories
+			"restore_privileges",       // Restoring dropped privileges
+		},
+		CapabilitiesRequired: map[string][]Capability{
+			"process_monitoring": {
+				CAP_NET_ADMIN,          // For netlink operations
+				CAP_SYS_PTRACE,         // For process monitoring
+				CAP_SYS_ADMIN,          // For process control
+			},
+			"process_control": {
+				CAP_SYS_PTRACE,         // For process suspension/resumption
+				CAP_SYS_ADMIN,          // For process management
+			},
+			"socket_management": {
+				CAP_CHOWN,              // For setting socket permissions
+			},
+			"privilege_management": {
+				CAP_SETUID,             // For dropping/changing UID
+				CAP_SETGID,             // For dropping/changing GID
+				CAP_SETPCAP,            // For setting capabilities
+			},
+		},
+		UnprivilegedAllowed: []string{
+			"authentication",           // User authentication dialogs
+			"configuration",            // Reading/writing config (in user's home)
+			"ui",                       // UI operations
+			"ipc_client",              // IPC client operations
+			"hash_computation",         // Computing hashes for allowed files
+		},
+	}
+}
+
+// IsOperationPrivileged checks if an operation requires elevated privileges
+func (p *PrivilegeManager) IsOperationPrivileged(operation string) (bool, []Capability) {
+	privOps := GetRequiredPrivileges()
+	
+	// Check if root is required
+	for _, op := range privOps.RootRequired {
+		if op == operation {
+			return true, nil // Root required, no specific capabilities
+		}
+	}
+	
+	// Check if capabilities are required
+	if caps, ok := privOps.CapabilitiesRequired[operation]; ok {
+		return true, caps // Privileged operation with specific capabilities
+	}
+	
+	// Check if unprivileged is allowed
+	for _, op := range privOps.UnprivilegedAllowed {
+		if op == operation {
+			return false, nil // Unprivileged operation
+		}
+	}
+	
+	// By default, consider unknown operations as privileged
+	p.logger.Warnf("Unknown operation '%s' requested, treating as privileged", operation)
+	return true, nil
+}
+
+// LogCapabilityState logs the current capability state
+func (p *PrivilegeManager) LogCapabilityState() error {
+	return p.logCapabilityState()
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"applock-go/internal/auth"
 	"applock-go/internal/config"
@@ -41,17 +42,30 @@ func NewClient(config *config.Config, authenticator *auth.Authenticator) (*Clien
 		return nil, fmt.Errorf("failed to create GUI: %v", err)
 	}
 
-	return &Client{
+	client := &Client{
 		config:        config,
 		authenticator: authenticator,
 		gui:           gui,
 		logger:        logger,
 		stopCh:        make(chan struct{}),
-	}, nil
+	}
+	
+	// Initialize shutdown handler
+	client.shutdownHandler = util.NewShutdownHandler(logger, 5*time.Second)
+	
+	// Register shutdown function
+	client.shutdownHandler.RegisterShutdownFunc(func() error {
+		return client.Stop()
+	})
+	
+	return client, nil
 }
 
 // Connect establishes a connection to the daemon
 func (c *Client) Connect() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
 	conn, err := net.Dial("unix", c.config.SocketPath)
 	if err != nil {
 		return fmt.Errorf("failed to connect to daemon: %v", err)
@@ -68,6 +82,9 @@ func (c *Client) Connect() error {
 
 // Disconnect closes the connection to the daemon
 func (c *Client) Disconnect() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
 	if c.conn != nil {
 		return c.conn.Close()
 	}
@@ -140,6 +157,9 @@ func (c *Client) sendAuthResponse(pid int, password string) {
 
 // sendMessage sends a message to the daemon
 func (c *Client) sendMessage(msg ipc.Message) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
 	return c.encoder.Encode(msg)
 }
 
@@ -161,13 +181,27 @@ func (c *Client) Ping() (bool, error) {
 
 // Stop gracefully shuts down the client
 func (c *Client) Stop() error {
-	close(c.stopCh)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	select {
+	case <-c.stopCh:
+		// Already stopped
+		return nil
+	default:
+		close(c.stopCh)
+	}
 
 	if c.conn != nil {
 		// Best effort to notify daemon, ignore errors
-		_ = c.sendMessage(ipc.Message{Type: ipc.MsgShutdown})
+		_ = c.encoder.Encode(ipc.Message{Type: ipc.MsgShutdown})
 		return c.Disconnect()
 	}
 
 	return nil
+}
+
+// HandleShutdown starts handling OS signals for graceful shutdown
+func (c *Client) HandleShutdown() {
+	c.shutdownHandler.HandleShutdown()
 }

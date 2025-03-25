@@ -98,6 +98,10 @@ type ProcessMonitor struct {
 	// Add a field to track monitored processes
 	monitoredProcesses map[int]ProcessInfo
 	monitoredMu        sync.RWMutex
+	
+	// Process verification
+	verifier      *ProcessVerifier
+	verifyHashes  bool // Whether to verify executable hashes
 }
 
 // Netlink message header
@@ -145,6 +149,9 @@ func NewProcessMonitor(cfg *config.Config, authenticator *auth.Authenticator) (*
 		// If the default logger isn't initialized, create a new one
 		logger = logging.NewLogger("[applock]", cfg.Verbose)
 	}
+	
+	// Create process verifier with default settings
+	verifier := NewProcessVerifier(logger)
 
 	return &ProcessMonitor{
 		config:             cfg,
@@ -155,11 +162,16 @@ func NewProcessMonitor(cfg *config.Config, authenticator *auth.Authenticator) (*
 		stopCh:             make(chan struct{}),
 		logger:             logger,
 		daemonMode:         false,
+		verifier:           verifier,
+		verifyHashes:       cfg.Monitor.VerifyHashes,
 	}, nil
 }
 
 // NewProcessMonitorDaemon creates a new process monitor in daemon mode
 func NewProcessMonitorDaemon(cfg *config.Config, logger *logging.Logger) (*ProcessMonitor, error) {
+	// Create process verifier
+	verifier := NewProcessVerifier(logger)
+	
 	return &ProcessMonitor{
 		config:             cfg,
 		handledPids:        make(map[int]string),
@@ -167,6 +179,8 @@ func NewProcessMonitorDaemon(cfg *config.Config, logger *logging.Logger) (*Proce
 		stopCh:             make(chan struct{}),
 		logger:             logger,
 		daemonMode:         true,
+		verifier:           verifier,
+		verifyHashes:       cfg.Monitor.VerifyHashes,
 	}, nil
 }
 
@@ -673,33 +687,92 @@ func (m *ProcessMonitor) getProcessState(pid int) (string, error) {
 	}
 }
 
-// handleExecEvent processes a process execution event
-func (m *ProcessMonitor) handleExecEvent(pid int) {
-	// Get comprehensive process info
+// handleExecEvent handles an exec event
+func (m *ProcessMonitor) handleExecEvent(pid int) error {
+	m.handledMu.Lock()
+	defer m.handledMu.Unlock()
+
+	// Check if PID is already being handled
+	if _, ok := m.handledPids[pid]; ok {
+		m.logger.Debugf("PID %d is already being handled", pid)
+		return nil
+	}
+
+	// Get process information
 	procInfo, err := m.getProcessInfo(pid)
 	if err != nil {
-		m.logger.Debugf("Could not get process info for PID %d: %v", pid, err)
-		return
+		// Process might have terminated; don't treat as an error
+		m.logger.Debugf("Failed to get process info for PID %d: %v", pid, err)
+		return nil
 	}
 
-	m.logger.Debugf("Process executed: %+v", procInfo)
+	// Extract command name from full path
+	command := procInfo.Command
+	commandName := filepath.Base(command)
 
-	// Check if this is a protected app
-	isBlocked, appPath := m.isBlockedApp(procInfo.Command, pid)
-	if isBlocked {
-		m.logger.Infof("Protected application detected: %s (PID: %d, Parent PID: %d, Hash: %s)",
-			procInfo.Command, pid, procInfo.ParentPID, procInfo.ExecHash)
+	// Check if this application is protected
+	isProtected := false
+	displayName := ""
+	
+	// Use the existing isBlockedApp method to check if the app is protected
+	isProtected, appPath := m.isBlockedApp(command, pid)
+	displayName = filepath.Base(appPath) // Simple display name for now
+	
+	// If configured to verify hashes and process is detected as protected
+	if m.verifyHashes && m.verifier != nil && isProtected {
+		// Get the app name from the path
+		appName := filepath.Base(appPath)
+		
+		// Check if we have any known hashes for this app in the blocked apps list
+		for _, blockedApp := range m.config.BlockedApps {
+			// If path matches and hash verification is enabled for this app
+			if blockedApp.Path == appPath && blockedApp.EnforceFileHash && blockedApp.FileHash != "" {
+				// Add the hash to the verifier
+				m.verifier.AddKnownHash(appName, appPath, blockedApp.FileHash)
+				break
+			}
+		}
+		
+		// Use the verifier to check if the process matches
+		err := m.verifier.VerifyProcess(pid, appName)
+		if err != nil {
+			// Log the verification error but continue with simple name matching
+			m.logger.Warnf("Error during process verification for %s (pid %d): %v, continuing with simple name matching",
+				appName, pid, err)
+		}
+	}
 
-		// Update monitored processes list with enhanced information
-		m.updateMonitoredProcessEnhanced(pid, appPath, false, procInfo.ExecHash, procInfo.ParentPID)
+	if !isProtected {
+		return nil
+	}
 
-		// Handle the protected app
-		m.handleBlockedApp(pid, appPath)
+	// Add PID to handled map to prevent duplicate handling
+	m.handledPids[pid] = commandName
+
+	// Mark the process as being monitored
+	m.monitoredMu.Lock()
+	m.monitoredProcesses[pid] = *procInfo
+	m.monitoredMu.Unlock()
+
+	// Add to monitored processes for tracking
+	if m.daemonMode {
+		// In daemon mode, notify the event handler
+		m.eventHandlerMu.RLock()
+		handler := m.eventHandler
+		m.eventHandlerMu.RUnlock()
+
+		if handler != nil {
+			m.logger.Debugf("Notifying event handler about PID %d (%s)", pid, commandName)
+			handler(pid, command, displayName)
+		} else {
+			m.logger.Warnf("No event handler registered, can't handle PID %d (%s)", pid, commandName)
+		}
 	} else {
-		// Log non-protected process for debugging
-		m.logger.Debugf("Non-protected process: %s (PID: %d, Parent PID: %d)",
-			procInfo.Command, pid, procInfo.ParentPID)
+		// In direct mode, handle the process directly
+		go m.handleBlockedApp(pid, appPath)
 	}
+
+	return nil
 }
 
 // getProcessExePath returns the executable path of a process
