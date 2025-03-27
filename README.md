@@ -1,4 +1,4 @@
-# Applock-go
+# 🐲 WyrmLock 🐉 
 
 A Linux security tool designed to control access to specific applications by requiring cryptographic authentication before they can be launched. It monitors process execution system-wide and intercepts launches of configured applications.
 
@@ -88,8 +88,8 @@ sudo dnf install golang themis-devel zenity yad kdialog libnotify
 2. Clone the repository:
 
 ```bash
-git clone https://applock-go-go.git
-cd applock-go
+git clone https://WyrmLock.git
+cd WyrmLock
 ```
 
 3. Build and install:
@@ -102,17 +102,17 @@ sudo make install
 
 ```bash
 sudo make install-service
-sudo systemctl enable --now applock-go.service
+sudo systemctl enable --now WyrmLock.service
 ```
 
 ### Configuration
 
-The default configuration file is installed at `/etc/applock-go/config.toml`. You can edit this file to configure which applications should be locked and how authentication should work.
+The default configuration file is installed at `/etc/WyrmLock/config.toml`. You can edit this file to configure which applications should be locked and how authentication should work.
 
 Example configuration:
 
 ```toml
-# Applock-go Configuration Example
+# WyrmLock Configuration Example
 
 # List of applications that should be locked
 [[blockedApps]]
@@ -139,7 +139,7 @@ useZeroKnowledgeProof = true
 
 # Path to store the secret if not using keychain
 # Only used if keychainService/keychainAccount are not specified
-secretPath = "/etc/applock-go/secret"
+secretPath = "/etc/WyrmLock/secret"
 
 # Hash algorithm to use when not using ZKP
 # Only used if useZeroKnowledgeProof is false
@@ -152,7 +152,7 @@ guiType = "gtk"
 
 # Keychain integration (Linux keyring)
 # To use keychain integration, specify both service and account
-keychainService = "applock-go"
+keychainService = "WyrmLock"
 keychainAccount = "default"
 
 # Uncomment and set to true to enable verbose logging
@@ -161,19 +161,19 @@ keychainAccount = "default"
 
 ## Usage
 
-Once installed and configured, Applock-go runs in the background and monitors process execution. When a configured application is launched, it will be suspended, and an authentication dialog will appear. The application will only continue if the correct authentication is provided.
+Once installed and configured, WyrmLock runs in the background and monitors process execution. When a configured application is launched, it will be suspended, and an authentication dialog will appear. The application will only continue if the correct authentication is provided.
 
 ### Setting a Secret
 
 First time usage requires setting up a secret:
 
 ```bash
-sudo applock-go -set-secret
+sudo WyrmLock -set-secret
 ```
 
 ## Architecture
 
-Applock-go uses an event-driven architecture with the following components:
+WyrmLock uses an event-driven architecture with the following components:
 
 1. **Process Monitor**: Interfaces with the Linux kernel's proc connector to receive process events
 2. **Authentication System**: Handles secure authentication using zero-knowledge proofs or traditional hashing
@@ -188,7 +188,7 @@ Please follow their development docs [Themis Documentation](https://docs.cossack
 
 ## Build Instructions
 
-To build Applock-go, run the following command:
+To build WyrmLock, run the following command:
 
 ```bash
 make build
