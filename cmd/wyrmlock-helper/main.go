@@ -10,8 +10,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"applock-go/internal/logging"
-	"applock-go/internal/privilege"
+	"wyrmlock/internal/logging"
+	"wyrmlock/internal/privilege"
 )
 
 const (

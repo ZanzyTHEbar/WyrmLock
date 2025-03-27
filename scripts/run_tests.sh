@@ -7,7 +7,7 @@ YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
 
 # Print header
-echo -e "${GREEN}Running tests for applock-go${NC}"
+echo -e "${GREEN}Running tests for wyrmlock${NC}"
 echo "=============================="
 
 # Create directories if they don't exist

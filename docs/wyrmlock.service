@@ -1,5 +1,5 @@
 [Unit]
-Description=Applock-Go Application Security Daemon
+Description=wyrmlock Application Security Daemon
 Documentation=https://github.com/ZanzyTHEbar/applock
 After=network.target
 
@@ -7,8 +7,8 @@ After=network.target
 Type=simple
 User=root
 Group=root
-WorkingDirectory=/etc/applock-go
-ExecStart=/usr/local/bin/applock-go daemon
+WorkingDirectory=/etc/wyrmlock
+ExecStart=/usr/local/bin/wyrmlock daemon
 StandardOutput=journal
 StandardError=journal
 Restart=on-failure
@@ -23,7 +23,7 @@ AmbientCapabilities=CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_SYS_ADMIN
 SecureBits=keep-caps
 NoNewPrivileges=true
 ProtectSystem=full
-ReadWritePaths=/var/run /etc/applock-go
+ReadWritePaths=/var/run /etc/wyrmlock
 ProtectHome=read-only
 ProtectControlGroups=true
 ProtectKernelModules=true

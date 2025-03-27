@@ -1,4 +1,4 @@
-# Applock-go Configuration Example
+# wyrmlock Configuration Example
 
 # List of applications that should be locked
 [[blockedApps]]
@@ -25,7 +25,7 @@ useZeroKnowledgeProof = true
 
 # Path to store the secret if not using keychain
 # Only used if keychainService/keychainAccount are not specified
-secretPath = "/etc/applock-go/secret"
+secretPath = "/etc/wyrmlock/secret"
 
 # Hash algorithm to use when not using ZKP
 # Only used if useZeroKnowledgeProof is false
@@ -38,7 +38,7 @@ guiType = "gtk"
 
 # Keychain integration (Linux keyring)
 # To use keychain integration, specify both service and account
-keychainService = "applock-go"
+keychainService = "wyrmlock"
 keychainAccount = "default"
 
 # Uncomment and set to true to enable verbose logging

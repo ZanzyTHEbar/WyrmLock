@@ -1,17 +1,17 @@
 .PHONY: build clean install uninstall test test-auth test-passing test-race test-coverage test-verbose
 
 # Project settings
-BINARY_NAME := applock-go
-HELPER_NAME := applock-helper
+BINARY_NAME := wyrmlock
+HELPER_NAME := $(BINARY_NAME)-helper
 INSTALL_DIR := /usr/local/bin
-CONFIG_DIR := /etc/applock-go
+CONFIG_DIR := /etc/$(BINARY_NAME)
 SYSTEMD_DIR := /etc/systemd/system
 SERVICE_FILE := $(SYSTEMD_DIR)/$(BINARY_NAME).service
 GO_FILES := $(shell find . -name '*.go')
 
 # Directories
-CMD_DIR := ./cmd/applock
-HELPER_DIR := ./cmd/applock-helper
+CMD_DIR := ./cmd/$(BINARY_NAME)
+HELPER_DIR := ./cmd/$(HELPER_NAME)
 
 # Build settings
 LDFLAGS := -ldflags="-s -w"
@@ -43,12 +43,12 @@ test:
 # Run tests only for the auth package
 test-auth:
 	@echo "Running auth package tests..."
-	@go test -v applock-go/internal/auth
+	@go test -v $(BINARY_NAME)/internal/auth
 
 # Run only the passing tests
 test-passing:
 	@echo "Running only the passing tests..."
-	@go test -v applock-go/internal/auth -run "TestAuthenticateZKP|TestAuthenticateZKP_MemoryClearing|TestAuthenticateZKP_Timeout|TestAuthenticateZKP_MaxIterations|TestClearMemory|TestBruteForceProtection|TestHashGeneration|TestUnsupportedHashAlgorithm"
+	@go test -v $(BINARY_NAME)/internal/auth -run "TestAuthenticateZKP|TestAuthenticateZKP_MemoryClearing|TestAuthenticateZKP_Timeout|TestAuthenticateZKP_MaxIterations|TestClearMemory|TestBruteForceProtection|TestHashGeneration|TestUnsupportedHashAlgorithm"
 
 # Run tests with race detection
 test-race:

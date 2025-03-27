@@ -1,4 +1,4 @@
-module applock-go
+module wyrmlock
 
 go 1.24.0
 
