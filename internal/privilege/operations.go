@@ -13,11 +13,11 @@ import (
 	"syscall"
 	"time"
 
-	"wyrmlock/internal/errors"
-	"wyrmlock/internal/logging"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
+	"wyrmlock/internal/errors"
+	"wyrmlock/internal/logging"
 )
 
 // OperationType defines the type of operation to perform
@@ -62,7 +62,7 @@ func NewOperationHandler(logger *logging.Logger, privManager *PrivilegeManager) 
 	return &OperationHandler{
 		logger:       logger,
 		privManager:  privManager,
-		helperBinary: "/usr/sbin/applock-helper",
+		helperBinary: "/usr/sbin/wyrmlock-helper",
 		isPrivileged: os.Geteuid() == 0,
 	}
 }

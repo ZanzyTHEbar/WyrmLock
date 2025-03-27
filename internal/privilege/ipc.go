@@ -16,10 +16,10 @@ import (
 
 const (
 	// HelperSocketPath is the default path for the Unix socket used for privileged operations
-	HelperSocketPath = "/run/applock-helper.sock"
+	HelperSocketPath = "/run/wyrmlock-helper.sock"
 	
 	// DefaultHelperBinary is the default path to the helper binary
-	DefaultHelperBinary = "/usr/local/bin/applock-helper"
+	DefaultHelperBinary = "/usr/local/bin/wyrmlock-helper"
 	
 	// MaxConnectRetries is the maximum number of connection retries
 	MaxConnectRetries = 5

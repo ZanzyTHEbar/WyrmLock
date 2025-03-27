@@ -16,7 +16,7 @@ import (
 
 const (
 	// HelperSocketPath is the path to the Unix domain socket for privileged operations
-	HelperSocketPath = "/var/run/applock-helper.sock"
+	HelperSocketPath = "/var/run/wyrmlock-helper.sock"
 )
 
 func main() {
@@ -26,8 +26,8 @@ func main() {
 	flag.Parse()
 
 	// Create logger
-	logger := logging.NewLogger("[applock-helper]", *verbose)
-	logger.Info("Starting applock-helper")
+	logger := logging.NewLogger("[wyrmlock-helper]", *verbose)
+	logger.Info("Starting wyrmlock-helper")
 
 	// Check if running as root
 	if os.Geteuid() != 0 {
@@ -85,7 +85,7 @@ func runDaemon(logger *logging.Logger, privManager *privilege.PrivilegeManager) 
 		os.Exit(1)
 	}
 
-	// Allow access from the applock group
+	// Allow access from the wyrmlock group
 	// TODO: In a real implementation, you'd verify the group exists first
 	if err := os.Chown(HelperSocketPath, 0, 0); err != nil {
 		logger.Fatalf("Failed to set socket ownership: %v", err)

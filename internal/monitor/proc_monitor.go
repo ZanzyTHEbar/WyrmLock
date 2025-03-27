@@ -147,7 +147,7 @@ func NewProcessMonitor(cfg *config.Config, authenticator *auth.Authenticator) (*
 	logger := logging.DefaultLogger
 	if logger == nil {
 		// If the default logger isn't initialized, create a new one
-		logger = logging.NewLogger("[applock]", cfg.Verbose)
+		logger = logging.NewLogger("[wyrmlock]", cfg.Verbose)
 	}
 	
 	// Create process verifier with default settings

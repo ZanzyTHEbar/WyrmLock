@@ -14,10 +14,10 @@ import (
 // Standard error codes based on gRPC error code specification
 const (
 	// Base value for custom codes
-	AppLockCodeBase = 1000
+	wyrmlockCodeBase = 1000
 
 	// Custom error codes
-	CodePrivilegeOperation = AppLockCodeBase + iota
+	CodePrivilegeOperation = wyrmlockCodeBase + iota
 	CodeProcessVerification
 	CodeProcessCommunication
 	CodeSocketOperation

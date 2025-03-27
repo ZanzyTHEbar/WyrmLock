@@ -84,7 +84,7 @@ func (g *GTKDialogImpl) ShowAuthDialog(appName string) (string, bool, error) {
 		g.theme.Primary, g.theme.Primary)
 
 	// Create a temporary CSS file
-	cssFile, err := os.CreateTemp("", "applock-gtk-*.css")
+	cssFile, err := os.CreateTemp("", "wyrmlock-gtk-*.css")
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create temporary CSS file: %w", err)
 	}

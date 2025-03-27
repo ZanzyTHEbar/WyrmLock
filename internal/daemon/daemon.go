@@ -91,7 +91,7 @@ func (d *Daemon) Start() error {
 		// Use helper for socket creation
 		d.logger.Info("Using privileged helper for socket creation")
 		resp, err := d.helperClient.ExecutePrivilegedOperation(privilege.OpSocketCreation, map[string]string{
-			"path": "/var/run/applock-daemon.sock",
+			"path": "/var/run/wyrmlock-daemon.sock",
 			"perm": "0666",
 		})
 		
@@ -113,7 +113,7 @@ func (d *Daemon) Start() error {
 		d.socket = listener
 	} else {
 		// Create socket directly
-		socketPath = "/var/run/applock-daemon.sock"
+		socketPath = "/var/run/wyrmlock-daemon.sock"
 		
 		// Remove existing socket if it exists
 		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {

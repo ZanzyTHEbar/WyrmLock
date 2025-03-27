@@ -11,7 +11,7 @@ import (
 
 func TestSecurityLogger(t *testing.T) {
 	// Create temporary log file path
-	tmpDir, err := os.MkdirTemp("", "applock-test-*")
+	tmpDir, err := os.MkdirTemp("", "wyrmlock-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestSecurityLogger(t *testing.T) {
 
 func TestSecurityLoggerGlobalInstance(t *testing.T) {
 	// Test the global instance initialization
-	tmpDir, err := os.MkdirTemp("", "applock-test-*")
+	tmpDir, err := os.MkdirTemp("", "wyrmlock-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}

@@ -1,6 +1,6 @@
 [Unit]
 Description=wyrmlock Application Security Daemon
-Documentation=https://github.com/ZanzyTHEbar/applock
+Documentation=https://github.com/ZanzyTHEbar/wyrmlock
 After=network.target
 
 [Service]

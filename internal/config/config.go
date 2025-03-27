@@ -104,8 +104,8 @@ func LoadConfig(configPath string) (*Config, error) {
 		// Look for config in default locations
 		v.SetConfigName("config")
 		v.SetConfigType("yaml")
-		v.AddConfigPath("/etc/applock")
-		v.AddConfigPath("$HOME/.config/applock")
+		v.AddConfigPath("/etc/wyrmlock")
+		v.AddConfigPath("$HOME/.config/wyrmlock")
 		v.AddConfigPath(".")
 	}
 
@@ -164,7 +164,7 @@ func setConfigDefaults(v *viper.Viper) {
 	v.SetDefault("monitor.hash_algorithm", "sha256")
 
 	// Default socket path
-	v.SetDefault("socket_path", "/var/run/applock-daemon.sock")
+	v.SetDefault("socket_path", "/var/run/wyrmlock-daemon.sock")
 
 	// Default to non-verbose logging
 	v.SetDefault("verbose", false)
@@ -242,7 +242,7 @@ func CreateDefaultConfig(path string) error {
 	v.Set("auth.secret_path", "/etc/wyrmlock/secret")
 
 	// Socket path
-	v.Set("socket_path", "/var/run/applock-daemon.sock")
+	v.Set("socket_path", "/var/run/wyrmlock-daemon.sock")
 
 	// Logging
 	v.Set("verbose", true)
@@ -316,7 +316,7 @@ func SaveConfig(cfg *Config, configPath string) error {
 // DefaultConfig returns a configuration with default values
 func DefaultConfig() *Config {
 	cfg := &Config{
-		SocketPath: "/var/run/applock-daemon.sock",
+		SocketPath: "/var/run/wyrmlock-daemon.sock",
 		Verbose:    false,
 		Auth: AuthConfig{
 			GuiType:               "gtk",

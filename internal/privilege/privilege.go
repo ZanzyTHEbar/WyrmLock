@@ -18,7 +18,7 @@ import (
 type Capability int
 
 const (
-	// Required capabilities for applock
+	// Required capabilities for wyrmlock
 	CAP_NET_ADMIN  Capability = 12 // For netlink operations
 	CAP_SYS_PTRACE Capability = 19 // For process monitoring
 	CAP_SYS_ADMIN  Capability = 21 // For process control

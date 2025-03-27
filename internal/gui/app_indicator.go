@@ -30,13 +30,13 @@ func NewAppIndicatorImpl() (*AppIndicatorImpl, error) {
 		return nil, fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	assetsDir := filepath.Join(homeDir, ".applock", "assets")
+	assetsDir := filepath.Join(homeDir, ".wyrmlock", "assets")
 	if err := os.MkdirAll(assetsDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create assets directory: %w", err)
 	}
 
 	// Create icon
-	iconPath := filepath.Join(assetsDir, "applock.svg")
+	iconPath := filepath.Join(assetsDir, "wyrmlock.svg")
 	if err := createIcon(iconPath); err != nil {
 		return nil, fmt.Errorf("failed to create icon: %w", err)
 	}
@@ -106,11 +106,11 @@ func (a *AppIndicatorImpl) Show() error {
 yad --notification \
 	--image="%s" \
 	--command="yad --menu \
-		--title='AppLock Menu' \
+		--title='wyrmlock Menu' \
 		--width=200 \
 		--height=300 \
 		--no-buttons \
-		--text='AppLock Menu' \
+		--text='wyrmlock Menu' \
 		--column='' \
 		'Show Protected Apps' \
 		'Add Application' \
@@ -155,7 +155,7 @@ func (a *AppIndicatorImpl) Hide() error {
 	return nil
 }
 
-// createIcon creates the AppLock icon SVG file
+// createIcon creates the wyrmlock icon SVG file
 func createIcon(path string) error {
 	// Modern lock icon in SVG format
 	iconSVG := `<?xml version="1.0" encoding="UTF-8"?>

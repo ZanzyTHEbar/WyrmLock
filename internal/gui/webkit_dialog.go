@@ -74,7 +74,7 @@ func NewWebKitDialogImpl() (*WebKitDialogImpl, error) {
 		return nil, fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	assetsDir := filepath.Join(homeDir, ".applock", "assets")
+	assetsDir := filepath.Join(homeDir, ".wyrmlock", "assets")
 	templateDir := filepath.Join(assetsDir, "templates")
 
 	// Create directories if they don't exist
@@ -458,7 +458,7 @@ func (w *WebKitDialogImpl) ShowAuthDialog(appName string) (string, bool, error) 
 
 	// Create a temporary file for the rendered HTML
 	tempDir := os.TempDir()
-	htmlPath := filepath.Join(tempDir, "applock-auth.html")
+	htmlPath := filepath.Join(tempDir, "wyrmlock-auth.html")
 
 	// Create the file
 	htmlFile, err := os.Create(htmlPath)

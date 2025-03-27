@@ -13,7 +13,7 @@ import (
 // CreateTempFile creates a temporary file with specific content for testing
 // Returns the file path and a cleanup function
 func CreateTempFile(t *testing.T, content []byte) (string, func()) {
-	tmpFile, err := os.CreateTemp("", "applock-test-*")
+	tmpFile, err := os.CreateTemp("", "wyrmmlock-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -32,7 +32,7 @@ func CreateTempFile(t *testing.T, content []byte) (string, func()) {
 // CreateTempDir creates a temporary directory for testing
 // Returns the directory path and a cleanup function
 func CreateTempDir(t *testing.T) (string, func()) {
-	tmpDir, err := os.MkdirTemp("", "applock-test-*")
+	tmpDir, err := os.MkdirTemp("", "wyrmmlock-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}

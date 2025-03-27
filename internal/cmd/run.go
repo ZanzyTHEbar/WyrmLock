@@ -368,7 +368,7 @@ Legacy mode (--legacy) runs everything in a single process with root privileges.
 
 		Run: func(cmd *cobra.Command, args []string) {
 			// Configure logger
-			logger := logging.NewLogger("applock", verbose)
+			logger := logging.NewLogger("wyrmlock", verbose)
 			logging.DefaultLogger = logger
 
 			// Load config
@@ -403,7 +403,7 @@ Legacy mode (--legacy) runs everything in a single process with root privileges.
 
 // runDaemonMode runs the application in daemon mode (privileged)
 func runDaemonMode(cfg *config.Config) {
-	fmt.Println("Starting Applock in daemon mode (privileged)")
+	fmt.Println("Starting wyrmlock in daemon mode (privileged)")
 
 	// Initialize daemon
 	d, err := initializeDaemon(cfg)
@@ -431,7 +431,7 @@ func runDaemonMode(cfg *config.Config) {
 
 // runClientMode runs the application in client mode (unprivileged)
 func runClientMode(cfg *config.Config) {
-	fmt.Println("Starting Applock in client mode (unprivileged)")
+	fmt.Println("Starting wyrmlock in client mode (unprivileged)")
 
 	// Initialize client
 	c, err := initializeClient(cfg)
@@ -468,7 +468,7 @@ func runClientMode(cfg *config.Config) {
 
 // runLegacyMode runs the application in legacy mode (single process, no privilege separation)
 func runLegacyMode(cfg *config.Config, nonInteractive bool) {
-	fmt.Println("Starting Applock in legacy mode (single process)")
+	fmt.Println("Starting wyrmlock in legacy mode (single process)")
 
 	// Initialize monitor (shared between modes)
 	mon, err := initializeMonitor(cfg)
