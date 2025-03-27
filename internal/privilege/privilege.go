@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"applock-go/internal/errors"
 	"applock-go/internal/logging"
 
 	"github.com/syndtr/gocapability/capability"
@@ -79,7 +80,7 @@ func (p *PrivilegeManager) StartVerificationLoop(ctx context.Context) {
 // logCapabilityState logs the current state of all capabilities
 func (p *PrivilegeManager) logCapabilityState() error {
 	if err := p.caps.Load(); err != nil {
-		return fmt.Errorf("failed to load capabilities for logging: %w", err)
+		return errors.PrivilegeError(fmt.Sprintf("failed to load capabilities for logging: %v", err))
 	}
 
 	requiredCaps := []Capability{
@@ -332,39 +333,42 @@ type PrivilegeOperations struct {
 	UnprivilegedAllowed []string
 }
 
-// GetRequiredPrivileges returns a mapping of operations to required privilege levels
+// Get a string definition since we can't directly reference OpPing from operations.go
+const (
+	// Operation types for privilege checks
+	OpAuthStr        = "authentication"
+	OpConfigStr      = "configuration"
+	OpSocketStr      = "socket_creation"
+	OpProcessCtlStr  = "process_control"
+	OpHashStr        = "hash_computation"
+	OpMonitorStr     = "process_monitoring"
+	OpPingStr        = "ping"
+)
+
+// GetRequiredPrivileges returns the privilege requirements for operations
 func GetRequiredPrivileges() PrivilegeOperations {
 	return PrivilegeOperations{
+		// Operations that absolutely require root
 		RootRequired: []string{
-			"initial_setup",            // Initial daemon setup
-			"socket_creation",          // Creating the socket in restricted directories
-			"restore_privileges",       // Restoring dropped privileges
+			// Nothing should absolutely require root - use capabilities instead
 		},
+		
+		// Operations that require specific capabilities
 		CapabilitiesRequired: map[string][]Capability{
-			"process_monitoring": {
-				CAP_NET_ADMIN,          // For netlink operations
-				CAP_SYS_PTRACE,         // For process monitoring
-				CAP_SYS_ADMIN,          // For process control
-			},
-			"process_control": {
-				CAP_SYS_PTRACE,         // For process suspension/resumption
-				CAP_SYS_ADMIN,          // For process management
-			},
-			"socket_management": {
-				CAP_CHOWN,              // For setting socket permissions
-			},
-			"privilege_management": {
-				CAP_SETUID,             // For dropping/changing UID
-				CAP_SETGID,             // For dropping/changing GID
-				CAP_SETPCAP,            // For setting capabilities
-			},
+			OpSocketStr:    {CAP_CHOWN, CAP_NET_ADMIN},
+			OpProcessCtlStr: {CAP_SYS_PTRACE, CAP_SYS_ADMIN},
+			OpHashStr:       {CAP_SYS_PTRACE}, // For accessing executable files
+			OpAuthStr:       {}, // Authentication doesn't require special privileges
+			OpConfigStr:     {}, // Configuration doesn't require special privileges
+			OpMonitorStr:    {CAP_NET_ADMIN, CAP_SYS_PTRACE}, // For proc connector
 		},
+		
+		// Operations that require no privileges
 		UnprivilegedAllowed: []string{
-			"authentication",           // User authentication dialogs
-			"configuration",            // Reading/writing config (in user's home)
-			"ui",                       // UI operations
-			"ipc_client",              // IPC client operations
-			"hash_computation",         // Computing hashes for allowed files
+			OpAuthStr,
+			OpConfigStr,
+			OpPingStr, // Ping operation is allowed for all users
+			// Others can be added here as needed
 		},
 	}
 }

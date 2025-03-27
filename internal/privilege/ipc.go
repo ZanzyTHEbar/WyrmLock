@@ -3,11 +3,14 @@ package privilege
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"time"
 
+	"applock-go/internal/errors"
 	"applock-go/internal/logging"
 )
 
@@ -50,6 +53,7 @@ func (c *HelperClient) Connect() error {
 	for i := 0; i < MaxConnectRetries; i++ {
 		c.conn, err = net.Dial("unix", c.socketPath)
 		if err == nil {
+			c.logger.Debug("Successfully connected to helper socket")
 			return nil
 		}
 		
@@ -57,15 +61,17 @@ func (c *HelperClient) Connect() error {
 		if i == 0 {
 			c.logger.Info("Helper not running, attempting to start it")
 			if err := c.startHelper(); err != nil {
-				return fmt.Errorf("failed to start helper: %w", err)
+				return errors.IPCError(fmt.Sprintf("failed to start helper: %v", err))
 			}
 		}
 		
+		c.logger.Debugf("Connection attempt %d failed, retrying in %v", i+1, ConnectRetryDelay)
 		time.Sleep(ConnectRetryDelay)
 	}
 	
-	return fmt.Errorf("failed to connect to helper after %d attempts: %w", 
-		MaxConnectRetries, err)
+	// All retries failed, return a structured error
+	return errors.IPCError(fmt.Sprintf("failed to connect to helper after %d attempts: %v", 
+		MaxConnectRetries, err))
 }
 
 // Disconnect closes the connection to the helper
@@ -82,14 +88,18 @@ func (c *HelperClient) Disconnect() error {
 func (c *HelperClient) startHelper() error {
 	// Check if the helper binary exists
 	if _, err := os.Stat(c.helperPath); os.IsNotExist(err) {
-		return fmt.Errorf("helper binary not found at %s: %w", c.helperPath, err)
+		return errors.Newf("helper binary not found at %s: %v", c.helperPath, err)
 	}
+	
+	c.logger.Debugf("Starting helper binary at %s", c.helperPath)
 	
 	// Launch the helper in daemon mode
 	cmd := exec.Command(c.helperPath, "--daemon")
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start helper: %w", err)
+		return errors.HelperError(fmt.Sprintf("failed to start helper process: %v", err))
 	}
+	
+	c.logger.Info("Helper process started successfully")
 	
 	// Don't wait for the helper to exit since it runs as a daemon
 	return nil
@@ -99,38 +109,103 @@ func (c *HelperClient) startHelper() error {
 func (c *HelperClient) SendRequest(req OperationRequest) (*OperationResponse, error) {
 	if c.conn == nil {
 		if err := c.Connect(); err != nil {
-			return nil, err
+			return nil, errors.Wrap(err, "failed to connect to helper")
 		}
 	}
+	
+	// Add timestamp to request for freshness
+	if req.Arguments == nil {
+		req.Arguments = make(map[string]string)
+	}
+	req.Arguments["timestamp"] = fmt.Sprintf("%d", time.Now().UnixNano())
 	
 	// Marshal the request to JSON
 	reqData, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, errors.IPCError(fmt.Sprintf("failed to marshal request: %v", err))
 	}
 	
-	// Send the request
+	// Create length-prefixed message for proper framing
+	// Format: [4-byte length][message]
+	msgLen := len(reqData)
+	lenBytes := make([]byte, 4)
+	lenBytes[0] = byte(msgLen >> 24)
+	lenBytes[1] = byte(msgLen >> 16)
+	lenBytes[2] = byte(msgLen >> 8)
+	lenBytes[3] = byte(msgLen)
+	
+	// Set write deadline to prevent hanging
+	c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	
+	// Write length prefix first
+	_, err = c.conn.Write(lenBytes)
+	if err != nil {
+		c.Disconnect() // Connection might be broken, so disconnect
+		return nil, errors.IPCError(fmt.Sprintf("failed to send message length: %v", err))
+	}
+	
+	// Write message body
 	_, err = c.conn.Write(reqData)
 	if err != nil {
 		c.Disconnect() // Connection might be broken, so disconnect
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return nil, errors.IPCError(fmt.Sprintf("failed to send request body: %v", err))
 	}
 	
-	// Read the response (assuming a fixed buffer size for simplicity)
-	// In a production environment, this should handle variable-length responses
-	respData := make([]byte, 4096)
-	n, err := c.conn.Read(respData)
+	// Set read deadline
+	c.conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	
+	// Read response length (4 bytes)
+	respLenBytes := make([]byte, 4)
+	_, err = io.ReadFull(c.conn, respLenBytes)
 	if err != nil {
-		c.Disconnect() // Connection might be broken, so disconnect
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		c.Disconnect()
+		return nil, errors.IPCError(fmt.Sprintf("failed to read response length: %v", err))
 	}
+	
+	// Parse response length
+	respLen := int(respLenBytes[0])<<24 | int(respLenBytes[1])<<16 | int(respLenBytes[2])<<8 | int(respLenBytes[3])
+	
+	// Sanity check on response length to prevent DoS
+	if respLen <= 0 || respLen > 1024*1024 { // Max 1MB response
+		c.Disconnect()
+		return nil, errors.IPCError(fmt.Sprintf("invalid response length: %d", respLen))
+	}
+	
+	// Read the exact response size
+	respData := make([]byte, respLen)
+	_, err = io.ReadFull(c.conn, respData)
+	if err != nil {
+		c.Disconnect()
+		return nil, errors.IPCError(fmt.Sprintf("failed to read response body: %v", err))
+	}
+	
+	// Clear read deadline
+	c.conn.SetReadDeadline(time.Time{})
 	
 	// Unmarshal the response
 	var resp OperationResponse
-	if err := json.Unmarshal(respData[:n], &resp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		return nil, errors.IPCError(fmt.Sprintf("failed to unmarshal response: %v", err))
 	}
 	
+	// Validate response
+	if resp.Results == nil {
+		resp.Results = make(map[string]string)
+	}
+	
+	// Check timestamp to prevent replay attacks (if server included it)
+	if timestamp, ok := resp.Results["timestamp"]; ok {
+		responseTime, err := strconv.ParseInt(timestamp, 10, 64)
+		if err == nil {
+			// Check if response is within 30 seconds
+			timeDiff := time.Now().UnixNano() - responseTime
+			if timeDiff < 0 || timeDiff > 30*int64(time.Second) {
+				c.logger.Warnf("Response timestamp suspicious: diff=%v ns", timeDiff)
+			}
+		}
+	}
+	
+	c.logger.Debugf("Received response for operation type %s: success=%v", req.Type, resp.Success)
 	return &resp, nil
 }
 

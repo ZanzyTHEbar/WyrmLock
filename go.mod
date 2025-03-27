@@ -3,6 +3,8 @@ module applock-go
 go 1.24.0
 
 require (
+	github.com/ZanzyTHEbar/assert-lib v1.2.0
+	github.com/ZanzyTHEbar/errbuilder-go v1.5.0
 	github.com/charmbracelet/bubbles v0.20.0
 	github.com/charmbracelet/bubbletea v1.3.4
 	github.com/charmbracelet/lipgloss v1.1.0
@@ -54,5 +56,6 @@ require (
 	golang.org/x/sys v0.30.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

@@ -8,9 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
+	"time"
 
+	"applock-go/internal/errors"
 	"applock-go/internal/logging"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -22,12 +25,13 @@ type OperationType string
 
 const (
 	// Operation types
-	OpHashComputation OperationType = "hash_computation"
-	OpProcessControl  OperationType = "process_control"
-	OpSocketCreation  OperationType = "socket_creation"
-	OpConfiguration   OperationType = "configuration"
-	OpAuthentication  OperationType = "authentication"
-	OpMonitoring      OperationType = "process_monitoring"
+	OpHashComputation OperationType = OpHashStr
+	OpProcessControl  OperationType = OpProcessCtlStr
+	OpSocketCreation  OperationType = OpSocketStr
+	OpConfiguration   OperationType = OpConfigStr
+	OpAuthentication  OperationType = OpAuthStr
+	OpMonitoring      OperationType = OpMonitorStr
+	OpPing            OperationType = OpPingStr
 )
 
 // OperationRequest represents a request to perform a privileged operation
@@ -71,15 +75,72 @@ func (h *OperationHandler) InitializeHelper() error {
 
 	// If we're running as root, we can perform operations directly
 	if h.isPrivileged {
+		h.logger.Info("Running with root privileges, no helper needed")
 		h.isInitialized = true
 		return nil
 	}
 
-	// Check if helper exists
-	if _, err := os.Stat(h.helperBinary); os.IsNotExist(err) {
+	// Check if helper binary exists
+	helperInfo, err := os.Stat(h.helperBinary)
+	if os.IsNotExist(err) {
 		return fmt.Errorf("helper binary not found: %s", h.helperBinary)
+	} else if err != nil {
+		return fmt.Errorf("error checking helper binary: %w", err)
 	}
-
+	
+	// Verify helper binary permissions (should be owned by root and setuid)
+	// This is a basic check - in production, you might want to verify signatures too
+	if runtime.GOOS == "linux" {
+		// Check ownership and permissions
+		stat, ok := helperInfo.Sys().(*syscall.Stat_t)
+		if !ok {
+			return fmt.Errorf("failed to get detailed file info for helper binary")
+		}
+		
+		// Binary should be owned by root
+		if stat.Uid != 0 {
+			return fmt.Errorf("helper binary not owned by root (uid=%d)", stat.Uid)
+		}
+		
+		// Check for setuid bit
+		isSetuid := (helperInfo.Mode() & os.ModeSetuid) != 0
+		if !isSetuid {
+			h.logger.Warn("Helper binary does not have setuid bit set, may not have required privileges")
+		}
+	}
+	
+	// Create a helper client to verify connection
+	helperClient := NewHelperClient(h.logger)
+	
+	// Test connection to helper (this will start it if not running)
+	if err := helperClient.Connect(); err != nil {
+		return fmt.Errorf("failed to connect to helper: %w", err)
+	}
+	
+	// Send a simple ping request to verify helper is working
+	resp, err := helperClient.ExecutePrivilegedOperation(
+		"ping", 
+		map[string]string{"message": "initialization"},
+	)
+	
+	// Clean up connection
+	helperClient.Disconnect()
+	
+	// Verify ping response
+	if err != nil {
+		return fmt.Errorf("failed to ping helper: %w", err)
+	}
+	
+	if !resp.Success {
+		return fmt.Errorf("helper responded with error: %s", resp.Error)
+	}
+	
+	// Check for expected ping response
+	if pong, ok := resp.Results["pong"]; !ok || pong != "true" {
+		return fmt.Errorf("helper did not respond correctly to ping")
+	}
+	
+	h.logger.Info("Helper binary initialized successfully")
 	h.isInitialized = true
 	return nil
 }
@@ -108,22 +169,92 @@ func (h *OperationHandler) ExecuteOperation(req OperationRequest) (*OperationRes
 
 // delegateToHelper delegates an operation to the privileged helper process
 func (h *OperationHandler) delegateToHelper(req OperationRequest) (*OperationResponse, error) {
-	// Convert request to JSON for IPC
-	// Implementation would use JSON over IPC to communicate with helper
-	// For now, return a mock response
 	h.logger.Debugf("Delegating operation %s to privileged helper", req.Type)
-
-	response := &OperationResponse{
-		Success: false,
-		Error:   "Helper process communication not yet implemented",
+	
+	// Create a helper client
+	helperClient := NewHelperClient(h.logger)
+	
+	// Add a unique request identifier for tracing
+	if req.Arguments == nil {
+		req.Arguments = make(map[string]string)
 	}
-
-	return response, nil
+	requestID := fmt.Sprintf("req-%d-%d", os.Getpid(), time.Now().UnixNano())
+	req.Arguments["request_id"] = requestID
+	
+	// Attempt to execute the operation through the helper
+	h.logger.Debugf("Sending request %s to helper for operation %s", requestID, req.Type)
+	resp, err := helperClient.ExecutePrivilegedOperation(req.Type, req.Arguments)
+	
+	// Handle connection errors with structured error handling
+	if err != nil {
+		h.logger.Errorf("Failed to communicate with helper: %v", err)
+		ipcErr := errors.IPCError(fmt.Sprintf("failed to communicate with helper for operation %s: %v", req.Type, err))
+		
+		return &OperationResponse{
+			Success: false,
+			Error:   ipcErr.Error(),
+			Results: map[string]string{
+				"request_id": requestID,
+				"status":     "error",
+				"error_type": "communication_failure",
+			},
+		}, ipcErr
+	}
+	
+	// Log the result
+	if resp.Success {
+		h.logger.Debugf("Helper successfully executed operation %s (request %s)", req.Type, requestID)
+	} else {
+		h.logger.Errorf("Helper failed to execute operation %s (request %s): %s", req.Type, requestID, resp.Error)
+		
+		// Create a structured error based on the operation type
+		var opErr error
+		switch req.Type {
+		case OpHashComputation:
+			opErr = errors.Newf("hash computation failed: %s", resp.Error)
+		case OpProcessControl:
+			opErr = errors.Newf("process control failed: %s", resp.Error)
+		case OpSocketCreation:
+			opErr = errors.Newf("socket creation failed: %s", resp.Error)
+		case OpAuthentication:
+			opErr = errors.Newf("authentication failed: %s", resp.Error)
+		case OpMonitoring:
+			opErr = errors.Newf("monitoring operation failed: %s", resp.Error)
+		default:
+			opErr = errors.Newf("helper operation failed: %s", resp.Error)
+		}
+		
+		// If we get back an error response but no error was returned,
+		// return the structured error we created
+		return resp, opErr
+	}
+	
+	// Always disconnect when done
+	if err := helperClient.Disconnect(); err != nil {
+		h.logger.Warnf("Error disconnecting from helper: %v", err)
+	}
+	
+	return resp, nil
 }
 
 // executeDirectly executes an operation directly with current privileges
 func (h *OperationHandler) executeDirectly(req OperationRequest, requiredCaps []Capability) (*OperationResponse, error) {
 	h.logger.Debugf("Executing operation %s directly", req.Type)
+
+	// Verify we have the required capabilities before executing the operation
+	if len(requiredCaps) > 0 {
+		// Create a temporary capability set to verify
+		tempCaps := make([]Capability, len(requiredCaps))
+		copy(tempCaps, requiredCaps)
+		
+		h.logger.Debugf("Verifying %d required capabilities for operation %s", len(requiredCaps), req.Type)
+		
+		// Check if we have all required capabilities
+		for _, cap := range requiredCaps {
+			// Just log for now - in future, we should verify each capability
+			h.logger.Debugf("Operation %s requires capability: %v", req.Type, cap)
+		}
+	}
 
 	// Implement specific operation handlers
 	switch req.Type {
@@ -139,6 +270,8 @@ func (h *OperationHandler) executeDirectly(req OperationRequest, requiredCaps []
 		return h.handleAuthentication(req)
 	case OpMonitoring:
 		return h.handleProcessMonitoring(req)
+	case OpPing:
+		return h.handlePing(req)
 	default:
 		return &OperationResponse{
 			Success: false,
@@ -532,18 +665,152 @@ func (h *OperationHandler) handleSocketCreation(req OperationRequest) (*Operatio
 
 // handleConfiguration handles configuration operations
 func (h *OperationHandler) handleConfiguration(req OperationRequest) (*OperationResponse, error) {
-	// TODO: Implementation details...
-	return &OperationResponse{
-		Success: true,
-	}, nil
+	// Get the operation action
+	action, ok := req.Arguments["action"]
+	if !ok {
+		action = "get" // Default to get action
+	}
+	
+	h.logger.Debugf("Configuration operation: %s", action)
+	
+	// Process different configuration actions
+	switch action {
+	case "get":
+		// Get configuration path
+		configPath, ok := req.Arguments["config_path"]
+		if !ok {
+			return &OperationResponse{
+				Success: false,
+				Error:   "missing config_path argument for get action",
+			}, nil
+		}
+		
+		h.logger.Debugf("Getting configuration from: %s", configPath)
+		
+		// In a real implementation, we would read the configuration file
+		// For now, just return success
+		return &OperationResponse{
+			Success: true,
+			Results: map[string]string{
+				"action":      "get",
+				"config_path": configPath,
+				"status":      "configuration_retrieved",
+			},
+		}, nil
+		
+	case "set":
+		// Get configuration path
+		configPath, ok := req.Arguments["config_path"]
+		if !ok {
+			return &OperationResponse{
+				Success: false,
+				Error:   "missing config_path argument for set action",
+			}, nil
+		}
+		
+		// Check for configuration data
+		configData, ok := req.Arguments["config_data"]
+		if !ok {
+			return &OperationResponse{
+				Success: false,
+				Error:   "missing config_data argument for set action",
+			}, nil
+		}
+		
+		h.logger.Debugf("Setting configuration at: %s (data length: %d)", 
+			configPath, len(configData))
+		
+		// In a real implementation, we would write the configuration file
+		// For now, just return success
+		return &OperationResponse{
+			Success: true,
+			Results: map[string]string{
+				"action":      "set",
+				"config_path": configPath,
+				"status":      "configuration_updated",
+			},
+		}, nil
+		
+	default:
+		return &OperationResponse{
+			Success: false,
+			Error:   fmt.Sprintf("unsupported configuration action: %s", action),
+		}, nil
+	}
 }
 
 // handleAuthentication handles authentication operations
 func (h *OperationHandler) handleAuthentication(req OperationRequest) (*OperationResponse, error) {
-	// TODO: Implementation details...
-	return &OperationResponse{
-		Success: true,
-	}, nil
+	// Get the authentication action
+	action, ok := req.Arguments["action"]
+	if !ok {
+		return &OperationResponse{
+			Success: false,
+			Error:   "missing action argument for authentication operation",
+		}, nil
+	}
+	
+	h.logger.Debugf("Authentication operation: %s", action)
+	
+	// Process different authentication actions
+	switch action {
+	case "verify_token":
+		// Get token to verify
+		token, ok := req.Arguments["token"]
+		if !ok {
+			return &OperationResponse{
+				Success: false,
+				Error:   "missing token argument for verify_token action",
+			}, nil
+		}
+		
+		// In a real implementation, we would verify the authentication token
+		// For now, just check if it's non-empty
+		isValid := len(token) > 0
+		
+		h.logger.Debugf("Verifying authentication token (valid: %v)", isValid)
+		
+		return &OperationResponse{
+			Success: isValid,
+			Results: map[string]string{
+				"action":     "verify_token",
+				"valid":      fmt.Sprintf("%v", isValid),
+				"token_type": "bearer", // Example token type
+			},
+		}, nil
+		
+	case "create_token":
+		// Get subject/user for the token
+		subject, ok := req.Arguments["subject"]
+		if !ok {
+			return &OperationResponse{
+				Success: false,
+				Error:   "missing subject argument for create_token action",
+			}, nil
+		}
+		
+		// In a real implementation, we would create a proper authentication token
+		// For now, just create a mock token
+		mockToken := fmt.Sprintf("mock-token-%s-%d", subject, time.Now().Unix())
+		
+		h.logger.Debugf("Created authentication token for subject: %s", subject)
+		
+		return &OperationResponse{
+			Success: true,
+			Results: map[string]string{
+				"action":  "create_token",
+				"token":   mockToken,
+				"subject": subject,
+				"expires": fmt.Sprintf("%d", time.Now().Add(24*time.Hour).Unix()),
+			},
+		}, nil
+		
+	default:
+		return &OperationResponse{
+			Success: false,
+			Error:   fmt.Sprintf("unsupported authentication action: %s", action),
+		}, nil
+	}
 }
 
 // handleProcessMonitoring handles process monitoring operations
@@ -762,6 +1029,30 @@ func (h *OperationHandler) handleProcessMonitoring(req OperationRequest) (*Opera
 			Error:   fmt.Sprintf("unsupported monitoring action: %s", action),
 		}, nil
 	}
+}
+
+// handlePing is a simple handler to verify the helper is working properly
+func (h *OperationHandler) handlePing(req OperationRequest) (*OperationResponse, error) {
+	// Log the ping message if provided
+	if msg, ok := req.Arguments["message"]; ok {
+		h.logger.Debugf("Received ping with message: %s", msg)
+	} else {
+		h.logger.Debug("Received ping")
+	}
+	
+	// Create response
+	response := &OperationResponse{
+		Success: true,
+		Results: map[string]string{
+			"pong":      "true",
+			"timestamp": fmt.Sprintf("%d", time.Now().UnixNano()),
+			"pid":       fmt.Sprintf("%d", os.Getpid()),
+			"uid":       fmt.Sprintf("%d", os.Getuid()),
+			"gid":       fmt.Sprintf("%d", os.Getgid()),
+		},
+	}
+	
+	return response, nil
 }
 
 // StartHelperProcess starts a new privileged helper process

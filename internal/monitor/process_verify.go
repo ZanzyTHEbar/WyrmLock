@@ -10,11 +10,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	appErrors "applock-go/internal/errors"
 	"applock-go/internal/logging"
+
+	"github.com/ZanzyTHEbar/errbuilder-go"
 )
 
 var (
@@ -64,9 +68,15 @@ func NewProcessHashCache(algorithm HashAlgorithm, maxSize int, expiry time.Durat
 // Get retrieves a hash from the cache or computes it if not present
 func (c *ProcessHashCache) Get(path string) (string, error) {
 	// Normalize the path
+	var errs errbuilder.ErrorMap
+
 	normalizedPath, err := filepath.Abs(path)
 	if err != nil {
-		return "", fmt.Errorf("failed to normalize path: %w", err)
+		errs.Set("path", path)
+		return "", appErrors.WithDetails(
+			appErrors.MonitorError(fmt.Sprintf("failed to normalize path: %v", err)),
+			errs,
+		)
 	}
 	path = normalizedPath
 
@@ -138,12 +148,30 @@ func computeFileHash(path string, algorithm HashAlgorithm) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", ErrExecutableNotFound
+			var errs errbuilder.ErrorMap
+			errs.Set("path", path)
+			errs.Set("error_type", "not_found")
+			return "", appErrors.WithDetails(
+				appErrors.ProcessVerificationError("executable not found"),
+				errs,
+			)
 		}
 		if os.IsPermission(err) {
-			return "", ErrPermissionDenied
+			var errs errbuilder.ErrorMap
+			errs.Set("path", path)
+			errs.Set("error_type", "permission_denied")
+			return "", appErrors.WithDetails(
+				appErrors.PermissionDenied("permission denied when accessing executable"),
+				errs,
+			)
 		}
-		return "", fmt.Errorf("failed to open file: %w", err)
+		var errs errbuilder.ErrorMap
+		errs.Set("path", path)
+		errs.Set("error_type", "file_access")
+		return "", appErrors.WithDetails(
+			appErrors.MonitorError(fmt.Sprintf("failed to open file: %v", err)),
+			errs,
+		)
 	}
 	defer file.Close()
 
@@ -168,12 +196,24 @@ func computeFileHash(path string, algorithm HashAlgorithm) (string, error) {
 			}
 		}()
 	default:
-		return "", fmt.Errorf("unsupported hash algorithm: %s", algorithm)
+		var errs errbuilder.ErrorMap
+		errs.Set("algorithm", string(algorithm))
+		errs.Set("supported_algorithms", "sha256,sha512")
+		return "", appErrors.WithDetails(
+			appErrors.MonitorError(fmt.Sprintf("unsupported hash algorithm: %s", algorithm)),
+			errs,
+		)
 	}
 
 	// Compute hash
 	if _, err := io.Copy(hash, file); err != nil {
-		return "", fmt.Errorf("failed to hash file: %w", err)
+		var errs errbuilder.ErrorMap
+		errs.Set("path", path)
+		errs.Set("algorithm", string(algorithm))
+		return "", appErrors.WithDetails(
+			appErrors.MonitorError(fmt.Sprintf("failed to hash file: %v", err)),
+			errs,
+		)
 	}
 
 	// Return hash as hex string
@@ -231,7 +271,13 @@ func (v *ProcessVerifier) VerifyProcess(pid int, appName string) error {
 	// Get process information
 	procInfo, err := GetProcessInfo(pid)
 	if err != nil {
-		return fmt.Errorf("failed to get process info: %w", err)
+		var errs errbuilder.ErrorMap
+		errs.Set("pid", fmt.Sprintf("%d", pid))
+		errs.Set("app_name", appName)
+		return appErrors.WithDetails(
+			appErrors.ProcessVerificationError(fmt.Sprintf("failed to get process info: %v", err)),
+			errs,
+		)
 	}
 	
 	// Get process executable path
@@ -246,144 +292,233 @@ func (v *ProcessVerifier) VerifyProcess(pid int, appName string) error {
 		// No known hashes for this app, fall back to simple basename comparison
 		baseName := filepath.Base(execPath)
 		if baseName != appName && baseName != appName+".exe" {
-			return fmt.Errorf("%w: expected %s, got %s", 
-				ErrPathMismatch, appName, baseName)
+			var errs errbuilder.ErrorMap
+			errs.Set("pid", fmt.Sprintf("%d", pid))
+			errs.Set("app_name", appName)
+			errs.Set("exec_path", execPath)
+			errs.Set("base_name", baseName)
+			errs.Set("verification_type", "name")
+			return appErrors.WithDetails(
+				appErrors.ProcessVerificationError(fmt.Sprintf("expected %s, got %s", appName, baseName)),
+				errs,
+			)
 		}
 		
-		// Log warning about falling back to simple name matching
-		v.logger.Warnf("No known hashes for %s, falling back to name matching", appName)
+		v.logger.Debugf("Process %d verified by name (%s)", pid, baseName)
 		return nil
 	}
 	
-	// Check if path is among known paths
-	var pathMatched bool
-	var matchedPath string
+	// Check if the exact path is expected
+	knownHash, pathMatch := pathMap[execPath]
 	
-	for knownPath := range pathMap {
-		// Use simple substring matching to handle path variations
-		if strings.HasSuffix(execPath, knownPath) {
-			pathMatched = true
-			matchedPath = knownPath
-			break
+	// If there's no exact path match, try normalized path comparisons
+	if !pathMatch {
+		foundMatch := false
+		
+		for knownPath := range pathMap {
+			// Check for same basename (simple case)
+			if filepath.Base(knownPath) == filepath.Base(execPath) {
+				knownHash = pathMap[knownPath]
+				foundMatch = true
+				break
+			}
+			
+			// Check for relative path match (more complex case)
+			knownPathRel, err1 := filepath.Rel("/", knownPath)
+			execPathRel, err2 := filepath.Rel("/", execPath)
+			
+			if err1 == nil && err2 == nil && knownPathRel == execPathRel {
+				knownHash = pathMap[knownPath]
+				foundMatch = true
+				break
+			}
+		}
+		
+		if !foundMatch {
+			var errs errbuilder.ErrorMap
+			errs.Set("pid", fmt.Sprintf("%d", pid))
+			errs.Set("app_name", appName)
+			errs.Set("exec_path", execPath)
+			errs.Set("known_paths", fmt.Sprintf("%v", pathMap))
+			errs.Set("verification_type", "path")
+			return appErrors.WithDetails(
+				appErrors.ProcessVerificationError(fmt.Sprintf("path %s not recognized for %s", execPath, appName)),
+				errs,
+			)
 		}
 	}
 	
-	if !pathMatched {
-		return fmt.Errorf("%w: path %s not recognized for %s", 
-			ErrPathMismatch, execPath, appName)
-	}
-	
-	// Get expected hash
-	expectedHash := pathMap[matchedPath]
-	
-	// If no hash defined, skip hash verification
-	if expectedHash == "" {
-		v.logger.Debugf("No hash defined for %s at %s, skipping hash verification", 
-			appName, matchedPath)
-		return nil
-	}
-	
-	// Compute hash of the executable
-	actualHash, err := v.hashCache.Get(execPath)
-	if err != nil {
-		if errors.Is(err, ErrPermissionDenied) {
-			v.logger.Warnf("Permission denied when hashing %s: %v", execPath, err)
-			return fmt.Errorf("%w: %v", ErrPermissionDenied, err)
+	// If we have a hash to verify against, compute the actual hash
+	if knownHash != "" {
+		// Compute hash of the executable
+		actualHash, err := v.hashCache.Get(execPath)
+		if err != nil {
+			// Check for specific error types
+			if errors.Is(err, ErrPermissionDenied) {
+				var errs errbuilder.ErrorMap
+				errs.Set("pid", fmt.Sprintf("%d", pid))
+				errs.Set("app_name", appName)
+				errs.Set("exec_path", execPath)
+				return appErrors.WithDetails(
+					appErrors.PermissionDenied(fmt.Sprintf("permission denied when verifying process: %v", err)),
+					errs,
+				)
+			}
+			
+			if errors.Is(err, ErrExecutableNotFound) {
+				var errs errbuilder.ErrorMap
+				errs.Set("pid", fmt.Sprintf("%d", pid))
+				errs.Set("app_name", appName)
+				errs.Set("exec_path", execPath)
+				return appErrors.WithDetails(
+					appErrors.ProcessVerificationError(fmt.Sprintf("executable not found: %v", err)),
+					errs,
+				)
+			}
+			
+			var errs errbuilder.ErrorMap
+			errs.Set("pid", fmt.Sprintf("%d", pid))
+			errs.Set("app_name", appName)
+			errs.Set("exec_path", execPath)
+			return appErrors.WithDetails(
+				appErrors.MonitorError(fmt.Sprintf("failed to hash executable: %v", err)),
+				errs,
+			)
 		}
-		if errors.Is(err, ErrExecutableNotFound) {
-			v.logger.Warnf("Executable not found: %s", execPath)
-			return fmt.Errorf("%w: %v", ErrExecutableNotFound, err)
+		
+		// Compare hashes
+		if actualHash != knownHash {
+			v.logger.Warnf("Hash mismatch for %s (PID %d): expected %s, got %s",
+				execPath, pid, knownHash, actualHash)
+				
+			var errs errbuilder.ErrorMap
+			errs.Set("pid", fmt.Sprintf("%d", pid))
+			errs.Set("app_name", appName)
+			errs.Set("exec_path", execPath)
+			errs.Set("expected_hash", knownHash)
+			errs.Set("actual_hash", actualHash)
+			errs.Set("verification_type", "hash")
+			return appErrors.WithDetails(
+				appErrors.ProcessVerificationError(fmt.Sprintf("hash mismatch for %s", execPath)),
+				errs,
+			)
 		}
-		return fmt.Errorf("failed to hash executable: %w", err)
+		
+		v.logger.Debugf("Process %d verified by hash (%s: %s)", pid, execPath, actualHash)
+	} else {
+		// No hash available, verified by path only
+		v.logger.Debugf("Process %d verified by path only (%s)", pid, execPath)
 	}
 	
-	// Compare hash
-	if actualHash != expectedHash {
-		v.logger.Warnf("Hash mismatch for %s: expected %s, got %s", 
-			execPath, expectedHash, actualHash)
-		return fmt.Errorf("%w: hash mismatch for %s", ErrHashMismatch, execPath)
-	}
-	
-	v.logger.Debugf("Successfully verified process %d (%s): path and hash match", 
-		pid, appName)
 	return nil
 }
 
-// GetProcessInfo retrieves information about a process by PID
+// GetProcessInfo retrieves detailed information about a process
 func GetProcessInfo(pid int) (*ProcessInfo, error) {
-	// Construct paths to proc files
-	cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", pid)
-	exePath := fmt.Sprintf("/proc/%d/exe", pid)
-	statPath := fmt.Sprintf("/proc/%d/stat", pid)
-	
-	// Read the executable path
-	execPath, err := os.Readlink(exePath)
+	// Get process executable path
+	exePath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("process %d no longer exists", pid)
+			var errs errbuilder.ErrorMap
+			errs.Set("pid", fmt.Sprintf("%d", pid))
+			return nil, appErrors.WithDetails(
+				appErrors.NotFound(fmt.Sprintf("process %d no longer exists", pid)),
+				errs,
+			)
 		}
 		if os.IsPermission(err) {
-			return nil, fmt.Errorf("permission denied when accessing process %d", pid)
+			var errs errbuilder.ErrorMap
+			errs.Set("pid", fmt.Sprintf("%d", pid))
+			return nil, appErrors.WithDetails(
+				appErrors.PermissionDenied(fmt.Sprintf("permission denied when accessing process %d", pid)),
+				errs,
+			)
 		}
-		return nil, fmt.Errorf("failed to read executable path: %w", err)
+		var errs errbuilder.ErrorMap
+		errs.Set("pid", fmt.Sprintf("%d", pid))
+		return nil, appErrors.WithDetails(
+			appErrors.MonitorError(fmt.Sprintf("failed to read executable path: %v", err)),
+			errs,
+		)
 	}
-	
-	// Read the command line
-	cmdlineBytes, err := os.ReadFile(cmdlinePath)
+
+	// Read command line
+	cmdlineBytes, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 	if err != nil {
-		return nil, fmt.Errorf("failed to read command line: %w", err)
+		var errs errbuilder.ErrorMap
+		errs.Set("pid", fmt.Sprintf("%d", pid))
+		return nil, appErrors.WithDetails(
+			appErrors.MonitorError(fmt.Sprintf("failed to read command line: %v", err)),
+			errs,
+		)
 	}
-	
-	// Command line arguments are separated by null bytes
+
+	// Replace null bytes with spaces for a more readable cmdline
 	cmdline := strings.ReplaceAll(string(cmdlineBytes), "\x00", " ")
-	
-	// Read stat file to get parent PID and state
-	statBytes, err := os.ReadFile(statPath)
+	cmdline = strings.TrimSpace(cmdline)
+
+	// Read process stat file for more information
+	statBytes, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
-		return nil, fmt.Errorf("failed to read stat file: %w", err)
+		var errs errbuilder.ErrorMap
+		errs.Set("pid", fmt.Sprintf("%d", pid))
+		return nil, appErrors.WithDetails(
+			appErrors.MonitorError(fmt.Sprintf("failed to read stat file: %v", err)),
+			errs,
+		)
 	}
-	
-	// Parse stat file (format is complicated, we just need a few fields)
-	statFields := strings.Fields(string(statBytes))
-	
-	// Check if we have enough fields
-	if len(statFields) < 5 {
-		return nil, fmt.Errorf("invalid stat file format for process %d", pid)
+
+	// Parse stat file
+	statParts := strings.Fields(string(statBytes))
+	if len(statParts) < 5 {
+		var errs errbuilder.ErrorMap
+		errs.Set("pid", fmt.Sprintf("%d", pid))
+		errs.Set("stat_parts_count", fmt.Sprintf("%d", len(statParts)))
+		return nil, appErrors.WithDetails(
+			appErrors.MonitorError(fmt.Sprintf("invalid stat file format for process %d", pid)),
+			errs,
+		)
 	}
-	
-	// Get process state (field 3)
-	state := statFields[2]
-	
-	// Get parent PID (field 4)
-	var ppid int
-	_, err = fmt.Sscanf(statFields[3], "%d", &ppid)
+
+	// Extract parent PID from stat file
+	ppid, err := strconv.Atoi(statParts[3])
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse parent PID: %w", err)
+		var errs errbuilder.ErrorMap
+		errs.Set("pid", fmt.Sprintf("%d", pid))
+		errs.Set("ppid_str", statParts[3])
+		return nil, appErrors.WithDetails(
+			appErrors.MonitorError(fmt.Sprintf("failed to parse parent PID: %v", err)),
+			errs,
+		)
 	}
-	
-	// Return process info
+
+	// Get process state
+	state := processStateFromString(statParts[2])
+
 	return &ProcessInfo{
 		PID:       pid,
-		Command:   execPath,
-		ExecHash:  "", // Will be computed on demand
+		Command:   exePath,
+		ExecHash:  "", // Hash is not computed by default to avoid expensive I/O
 		ParentPID: ppid,
+		Allowed:   false, // Default to false, should be set by caller
+		StartTime: time.Now().Unix(),
 		CmdLine:   cmdline,
-		State:     processStateFromString(state),
+		State:     state,
 	}, nil
 }
 
-// processStateFromString converts a proc state character to our state string
+// processStateFromString converts a /proc/[pid]/stat state character to a readable state string
 func processStateFromString(state string) string {
 	switch state {
 	case "R":
 		return ProcessStateRunning
 	case "S", "D":
-		return ProcessStateRunning // Sleeping/waiting are still "running" for our purposes
+		return ProcessStateRunning // Sleeping or waiting, still considered running
 	case "T":
 		return ProcessStateSuspended
 	case "Z", "X":
 		return ProcessStateTerminated
 	default:
-		return "unknown"
+		return ProcessStateRunning // Default to running for unknown states
 	}
 } 
