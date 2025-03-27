@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"applock-go/internal/auth"
-	"applock-go/internal/testutil"
+	"wyrmlock/internal/auth"
+	"wyrmlock/internal/testutil"
 )
 
 // TestAuthenticateTraditional tests the traditional authentication methods

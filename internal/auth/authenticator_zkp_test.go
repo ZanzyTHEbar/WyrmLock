@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"applock-go/internal/auth"
-	"applock-go/internal/testutil"
+	"wyrmlock/internal/auth"
+	"wyrmlock/internal/testutil"
 )
 
 // TestAuthenticateZKP tests the ZKP authentication process using a simplified approach

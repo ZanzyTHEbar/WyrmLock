@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"applock-go/internal/monitor"
+	"wyrmlock/internal/monitor"
 )
 
 // TestProcessVerificationError tests the process verification error handling

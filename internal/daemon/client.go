@@ -7,13 +7,13 @@ import (
 	"sync"
 	"time"
 
-	"applock-go/internal/auth"
-	"applock-go/internal/config"
-	"applock-go/internal/gui"
-	"applock-go/internal/ipc"
-	"applock-go/internal/logging"
-	"applock-go/internal/monitor"
-	"applock-go/internal/util"
+	"wyrmlock/internal/auth"
+	"wyrmlock/internal/config"
+	"wyrmlock/internal/gui"
+	"wyrmlock/internal/ipc"
+	"wyrmlock/internal/logging"
+	"wyrmlock/internal/monitor"
+	"wyrmlock/internal/util"
 )
 
 // Client represents a connection to the daemon

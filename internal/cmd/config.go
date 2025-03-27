@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
-	"applock-go/internal/config"
+	"wyrmlock/internal/config"
 )
 
 // Config editor model
@@ -161,7 +161,7 @@ func (m configModel) View() string {
 	var screen string
 
 	// Title
-	screen += titleStyle.Render("Applock-Go Configuration") + "\n\n"
+	screen += titleStyle.Render("wyrmlock Configuration") + "\n\n"
 
 	// If there's an error, show it
 	if m.err != nil {
@@ -226,7 +226,7 @@ func newConfigCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Manage application configuration",
-		Long:  `Edit the applock-go configuration through an interactive interface.`,
+		Long:  `Edit the wyrmlock configuration through an interactive interface.`,
 		Run: func(cmd *cobra.Command, args []string) {
 			p := tea.NewProgram(initialConfigModel())
 			if _, err := p.Run(); err != nil {

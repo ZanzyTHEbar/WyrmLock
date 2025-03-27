@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"applock-go/internal/auth"
+	"wyrmlock/internal/auth"
 )
 
 func TestBruteForceProtection(t *testing.T) {

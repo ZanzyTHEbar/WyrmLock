@@ -239,7 +239,7 @@ func CreateDefaultConfig(path string) error {
 	v.Set("auth.hash_algorithm", "argon2id")
 	v.Set("auth.max_attempts", 3)
 	v.Set("auth.lockout_duration", 300)
-	v.Set("auth.secret_path", "/etc/applock-go/secret")
+	v.Set("auth.secret_path", "/etc/wyrmlock/secret")
 
 	// Socket path
 	v.Set("socket_path", "/var/run/applock-daemon.sock")
@@ -324,7 +324,7 @@ func DefaultConfig() *Config {
 			MaxAttempts:           3,
 			LockoutDuration:       300, // 5 minutes
 			UseZeroKnowledgeProof: true,
-			SecretPath:            "/etc/applock-go/secret",
+			SecretPath:            "/etc/wyrmlock/secret",
 		},
 		Monitor: MonitorConfig{
 			ScanInterval:  1,

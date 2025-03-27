@@ -7,12 +7,12 @@ import (
 	"os"
 	"time"
 
-	"applock-go/internal/config"
-	"applock-go/internal/ipc"
-	"applock-go/internal/logging"
-	"applock-go/internal/monitor"
-	"applock-go/internal/privilege"
-	"applock-go/internal/util"
+	"wyrmlock/internal/config"
+	"wyrmlock/internal/ipc"
+	"wyrmlock/internal/logging"
+	"wyrmlock/internal/monitor"
+	"wyrmlock/internal/privilege"
+	"wyrmlock/internal/util"
 )
 
 // Daemon represents the privileged process monitoring daemon

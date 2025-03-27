@@ -13,11 +13,11 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
-	"applock-go/internal/auth"
-	"applock-go/internal/config"
-	"applock-go/internal/daemon"
-	"applock-go/internal/logging"
-	"applock-go/internal/monitor"
+	"wyrmlock/internal/auth"
+	"wyrmlock/internal/config"
+	"wyrmlock/internal/daemon"
+	"wyrmlock/internal/logging"
+	"wyrmlock/internal/monitor"
 )
 
 var (
@@ -142,13 +142,13 @@ func (m runModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m runModel) View() string {
 	if m.err != nil {
-		return titleStyle.Render("Applock-Go") + "\n" +
+		return titleStyle.Render("wyrmlock") + "\n" +
 			statusErrorStyle.Render(fmt.Sprintf("Error: %v", m.err)) + "\n\n" +
 			"Press q to quit."
 	}
 
 	if !m.ready {
-		return titleStyle.Render("Applock-Go") + "\n" +
+		return titleStyle.Render("wyrmlock") + "\n" +
 			"Loading configuration... " + m.processSpinner.View() + "\n\n" +
 			"Press q to quit."
 	}
@@ -160,7 +160,7 @@ func (m runModel) View() string {
 	}
 
 	status := statusOkStyle.Render("✓ Monitoring active")
-	return titleStyle.Render("Applock-Go") + "\n" +
+	return titleStyle.Render("wyrmlock") + "\n" +
 		status + "\n" +
 		blockedApps + "\n" +
 		tableStyle.Render(m.processTable.View()) + "\n\n" +
@@ -444,7 +444,7 @@ func runClientMode(cfg *config.Config) {
 	// Connect to daemon
 	if err := clientInstance.Connect(); err != nil {
 		fmt.Printf("Failed to connect to daemon: %v\n", err)
-		fmt.Println("Make sure the daemon is running with 'sudo applock-go run --daemon'")
+		fmt.Println("Make sure the daemon is running with 'sudo wyrmlock run --daemon'")
 		os.Exit(1)
 	}
 

@@ -157,7 +157,7 @@ func (ui *StatusUI) View() string {
 	var view strings.Builder
 
 	// Title
-	view.WriteString(statusTitleStyle.Render("Applock-Go Status Monitor"))
+	view.WriteString(statusTitleStyle.Render("wyrmlock Status Monitor"))
 	view.WriteString("\n\n")
 
 	// Connection status

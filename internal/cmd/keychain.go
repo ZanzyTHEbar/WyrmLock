@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"applock-go/internal/keychain"
+	"wyrmlock/internal/keychain"
 )
 
 func newKeychainCommand() *cobra.Command {

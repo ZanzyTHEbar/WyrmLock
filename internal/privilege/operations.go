@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"applock-go/internal/errors"
-	"applock-go/internal/logging"
+	"wyrmlock/internal/errors"
+	"wyrmlock/internal/logging"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"

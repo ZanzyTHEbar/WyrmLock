@@ -14,10 +14,10 @@ import (
 	"syscall"
 	"unsafe"
 
-	"applock-go/internal/auth"
-	"applock-go/internal/config"
-	"applock-go/internal/gui"
-	"applock-go/internal/logging"
+	"wyrmlock/internal/auth"
+	"wyrmlock/internal/config"
+	"wyrmlock/internal/gui"
+	"wyrmlock/internal/logging"
 )
 
 const (

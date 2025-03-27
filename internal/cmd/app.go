@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"applock-go/internal/config"
+	"wyrmlock/internal/config"
 )
 
 // Add a new application to the protected list

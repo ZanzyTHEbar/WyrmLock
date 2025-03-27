@@ -8,8 +8,8 @@ import (
 	"syscall"
 	"time"
 
-	"applock-go/internal/errors"
-	"applock-go/internal/logging"
+	"wyrmlock/internal/errors"
+	"wyrmlock/internal/logging"
 
 	"github.com/syndtr/gocapability/capability"
 )

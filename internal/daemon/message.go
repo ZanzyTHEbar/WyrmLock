@@ -1,7 +1,7 @@
 package daemon
 
 import (
-	"applock-go/internal/monitor"
+	"wyrmlock/internal/monitor"
 )
 
 // MessageType defines the type of message being sent over IPC

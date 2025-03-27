@@ -1,7 +1,7 @@
 package gui
 
 import (
-	"applock-go/internal/config"
+	"wyrmlock/internal/config"
 )
 
 // GUI handles the graphical user interface for authentication

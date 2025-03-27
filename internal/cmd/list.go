@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
-	"applock-go/internal/config"
+	"wyrmlock/internal/config"
 )
 
 // List model for displaying blocked applications
@@ -80,18 +80,18 @@ func (m listModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m listModel) View() string {
 	if m.err != nil {
-		return titleStyle.Render("Applock-Go: Blocked Applications") + "\n\n" +
+		return titleStyle.Render("wyrmlock: Blocked Applications") + "\n\n" +
 			statusErrorStyle.Render(fmt.Sprintf("Error: %v", m.err)) + "\n\n" +
 			"Press q to quit."
 	}
 
 	if m.cfg == nil {
-		return titleStyle.Render("Applock-Go: Blocked Applications") + "\n\n" +
+		return titleStyle.Render("wyrmlock: Blocked Applications") + "\n\n" +
 			"Loading configuration...\n\n" +
 			"Press q to quit."
 	}
 
-	return titleStyle.Render("Applock-Go: Blocked Applications") + "\n\n" +
+	return titleStyle.Render("wyrmlock: Blocked Applications") + "\n\n" +
 		tableStyle.Render(m.table.View()) + "\n\n" +
 		"Press ↑/↓ to navigate, q to quit."
 }
@@ -100,7 +100,7 @@ func newListCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List blocked applications",
-		Long:  `Show a list of applications that are being blocked by applock-go.`,
+		Long:  `Show a list of applications that are being blocked by wyrmlock.`,
 		Run: func(cmd *cobra.Command, args []string) {
 			p := tea.NewProgram(initialListModel())
 			if _, err := p.Run(); err != nil {

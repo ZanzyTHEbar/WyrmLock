@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"applock-go/internal/privilege"
-	"applock-go/internal/testutil"
+	"wyrmlock/internal/privilege"
+	"wyrmlock/internal/testutil"
 )
 
 // TestCapabilityConstants tests the capability constants

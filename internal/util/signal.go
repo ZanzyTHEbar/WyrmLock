@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"applock-go/internal/logging"
+	"wyrmlock/internal/logging"
 )
 
 // ShutdownHandler manages graceful application shutdown

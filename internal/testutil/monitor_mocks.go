@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"applock-go/internal/monitor"
+	"wyrmlock/internal/monitor"
 )
 
 // MockProcessMonitor implements monitor.ProcessMonitor interface for testing

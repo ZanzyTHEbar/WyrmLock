@@ -41,10 +41,10 @@ func NewKeychainIntegration(service, account string) (*KeychainIntegration, erro
 	
 	// Create default fallback path in user's home directory
 	homeDir, err := os.UserHomeDir()
-	fallbackPath := filepath.Join(homeDir, ".config", "applock-go", "secret")
+	fallbackPath := filepath.Join(homeDir, ".config", "wyrmlock", "secret")
 	if err != nil {
 		// If we can't get home directory, use /tmp as a last resort
-		fallbackPath = "/tmp/applock-go-secret"
+		fallbackPath = "/tmp/wyrmlock-secret"
 	}
 	
 	return &KeychainIntegration{

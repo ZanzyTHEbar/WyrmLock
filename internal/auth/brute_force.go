@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"applock-go/internal/logging"
+	"wyrmlock/internal/logging"
 )
 
 // BruteForceProtector implements protection against brute force attacks

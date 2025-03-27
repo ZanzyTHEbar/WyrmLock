@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"applock-go/internal/config"
+	"wyrmlock/internal/config"
 )
 
 func newCreateConfigCommand() *cobra.Command {

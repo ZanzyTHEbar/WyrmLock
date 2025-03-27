@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sync"
 
-	"applock-go/internal/privilege"
+	"wyrmlock/internal/privilege"
 )
 
 // MockPrivilegeManager implements privilege.PrivilegeManager interface for testing

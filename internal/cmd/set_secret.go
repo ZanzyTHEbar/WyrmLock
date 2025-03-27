@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"strings"
 
-	"applock-go/internal/auth"
+	"wyrmlock/internal/auth"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	"applock-go/internal/config"
+	"wyrmlock/internal/config"
 )
 
 // Secret setting model

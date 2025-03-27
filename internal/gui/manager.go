@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"applock-go/internal/logging"
+	"wyrmlock/internal/logging"
 )
 
 // Common errors

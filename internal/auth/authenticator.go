@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"applock-go/internal/config"
-	"applock-go/internal/keychain"
-	"applock-go/internal/logging"
+	"wyrmlock/internal/config"
+	"wyrmlock/internal/keychain"
+	"wyrmlock/internal/logging"
 
 	"github.com/cossacklabs/themis/gothemis/compare"
 )
@@ -184,7 +184,7 @@ func (a *Authenticator) AuthenticateZKP(userInput []byte) (bool, error) {
 	// Add basic tracking info
 	state.metadata["client_ip"] = "local" // In a networked context, this would be the client IP
 	state.metadata["auth_type"] = "zkp_secure_comparator"
-	state.metadata["user_agent"] = "applock-go" // Could be more specific in a real context
+	state.metadata["user_agent"] = "wyrmlock" // Could be more specific in a real context
 
 	// Log protocol initiation with context ID for tracing
 	a.logger.Debugf("Starting ZKP protocol with context ID: %s", state.contextID)

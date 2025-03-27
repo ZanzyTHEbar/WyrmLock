@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"applock-go/internal/auth"
-	"applock-go/internal/config"
-	"applock-go/internal/logging"
+	"wyrmlock/internal/auth"
+	"wyrmlock/internal/config"
+	"wyrmlock/internal/logging"
 )
 
 // CreateTempFile creates a temporary file with specific content for testing

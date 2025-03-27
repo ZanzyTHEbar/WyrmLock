@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	appErrors "applock-go/internal/errors"
-	"applock-go/internal/logging"
+	appErrors "wyrmlock/internal/errors"
+	"wyrmlock/internal/logging"
 
 	"github.com/ZanzyTHEbar/errbuilder-go"
 )

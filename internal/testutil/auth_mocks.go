@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"applock-go/internal/auth"
+	"wyrmlock/internal/auth"
 )
 
 // MockAuthenticator implements auth.Authenticator interface for testing

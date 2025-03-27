@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	"applock-go/internal/errors"
-	"applock-go/internal/logging"
+	"wyrmlock/internal/errors"
+	"wyrmlock/internal/logging"
 )
 
 const (

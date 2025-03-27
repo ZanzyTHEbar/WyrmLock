@@ -58,7 +58,7 @@ func NewSecurityLogger(logPath string, stdLogger *Logger) (*SecurityLogger, erro
 		if err != nil {
 			return nil, fmt.Errorf("failed to get user home directory: %w", err)
 		}
-		logPath = filepath.Join(homeDir, ".applock-go", "security.log")
+		logPath = filepath.Join(homeDir, ".wyrmlock", "security.log")
 	}
 
 	// Ensure directory exists

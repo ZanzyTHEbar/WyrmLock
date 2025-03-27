@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"applock-go/internal/logging"
+	"wyrmlock/internal/logging"
 )
 
 func TestSecurityLogger(t *testing.T) {

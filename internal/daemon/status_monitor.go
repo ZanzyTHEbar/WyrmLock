@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"applock-go/internal/ipc"
-	"applock-go/internal/logging"
-	"applock-go/internal/monitor"
+	"wyrmlock/internal/ipc"
+	"wyrmlock/internal/logging"
+	"wyrmlock/internal/monitor"
 )
 
 // DaemonStatus represents the current state of the daemon
