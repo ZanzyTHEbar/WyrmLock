@@ -1,5 +1,5 @@
 ## Overview
-Applock-go is a Linux security tool designed to control access to specific applications by requiring cryptographic authentication before they can be launched. It monitors process execution system-wide and intercepts launches of configured applications.
+WyrmLock is a Linux security tool designed to control access to specific applications by requiring cryptographic authentication before they can be launched. It monitors process execution system-wide and intercepts launches of configured applications.
 
 ### Key Points
 - Research suggests that building an app like `applock` using Golang with zero-knowledge proofs for authentication is feasible, using libraries like Themis.
@@ -172,7 +172,7 @@ if (compare_hash(answer, crpyto_hash)) {
 ### Configuration
 - Uses libconfig library to parse configuration
 - Reads cryptographic hash and program blocklist
-- Configuration stored in /opt/applock-go/config
+- Configuration stored in /opt/WyrmLock/config
 
 ## Native APIs Used
 1. **Linux-specific APIs**:
@@ -237,4 +237,4 @@ The approach is elegant in its simplicity - instead of preventing execution, it 
    - The use of interfaces and abstractions allows for easier testing and mocking of dependencies.
 
 ## Summary
-Applock-go demonstrates a clever use of Linux's process monitoring and control capabilities to implement application-level security. It leverages kernel-level notifications rather than file system hooks or executable modifications, making it relatively non-intrusive to the system while still providing effective controls.
+WyrmLock demonstrates a clever use of Linux's process monitoring and control capabilities to implement application-level security. It leverages kernel-level notifications rather than file system hooks or executable modifications, making it relatively non-intrusive to the system while still providing effective controls.
