@@ -1,6 +1,6 @@
 [Unit]
 Description=Applock-Go Application Security Daemon
-Documentation=https://github.com/yourusername/applock-go
+Documentation=https://github.com/ZanzyTHEbar/applock
 After=network.target
 
 [Service]
