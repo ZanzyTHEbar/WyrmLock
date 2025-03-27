@@ -35,13 +35,13 @@ A Linux security tool designed to control access to specific applications by req
 - [x] Configuration validation
 - [x] Blocked application listing
 - [x] Interactive configuration editor
+- [x] Complete Zero-Knowledge Proof authentication via Themis
+- [x] Comprehensive error handling and recovery
+- [x] Proper signal handling for graceful termination
+- [x] Brute force protection mechanisms
 
 ### To Be Implemented
 
-- [ ] Complete Zero-Knowledge Proof authentication via Themis
-- [ ] Comprehensive error handling and recovery
-- [ ] Proper signal handling for graceful termination
-- [ ] Brute force protection mechanisms
 - [ ] More granular access controls
 - [ ] Enhanced logging and audit trails
 - [ ] Child process tracking
