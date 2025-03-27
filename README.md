@@ -1,3 +1,5 @@
+![WyrmLock Logo](/imgs/logo.webp)
+
 # 🐲 WyrmLock 🐉 
 
 A Linux security tool designed to control access to specific applications by requiring cryptographic authentication before they can be launched. It monitors process execution system-wide and intercepts launches of configured applications.
@@ -88,7 +90,7 @@ sudo dnf install golang themis-devel zenity yad kdialog libnotify
 2. Clone the repository:
 
 ```bash
-git clone https://WyrmLock.git
+git clone https://github.com/ZanzyTHEbar/WyrmLock.git
 cd WyrmLock
 ```
 
@@ -102,12 +104,12 @@ sudo make install
 
 ```bash
 sudo make install-service
-sudo systemctl enable --now WyrmLock.service
+sudo systemctl enable --now wyrmlock.service
 ```
 
 ### Configuration
 
-The default configuration file is installed at `/etc/WyrmLock/config.toml`. You can edit this file to configure which applications should be locked and how authentication should work.
+The default configuration file is installed at `/etc/wyrmlock/config.toml`. You can edit this file to configure which applications should be locked and how authentication should work.
 
 Example configuration:
 
@@ -139,7 +141,7 @@ useZeroKnowledgeProof = true
 
 # Path to store the secret if not using keychain
 # Only used if keychainService/keychainAccount are not specified
-secretPath = "/etc/WyrmLock/secret"
+secretPath = "/etc/wyrmlock/secret"
 
 # Hash algorithm to use when not using ZKP
 # Only used if useZeroKnowledgeProof is false
@@ -152,7 +154,7 @@ guiType = "gtk"
 
 # Keychain integration (Linux keyring)
 # To use keychain integration, specify both service and account
-keychainService = "WyrmLock"
+keychainService = "wyrmlock"
 keychainAccount = "default"
 
 # Uncomment and set to true to enable verbose logging
@@ -168,7 +170,7 @@ Once installed and configured, WyrmLock runs in the background and monitors proc
 First time usage requires setting up a secret:
 
 ```bash
-sudo WyrmLock -set-secret
+sudo wyrmlock -set-secret
 ```
 
 ## Architecture
